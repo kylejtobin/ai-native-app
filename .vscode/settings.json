@@ -1,0 +1,35 @@
+{
+    "[python]": {
+      "editor.defaultFormatter": "charliermarsh.ruff",
+      "editor.formatOnSave": true,
+      "editor.codeActionsOnSave": {
+        "source.fixAll": "always"
+      }
+    },
+  
+    // Python interpreter and tools
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "ruff.interpreter": ["${workspaceFolder}/.venv/bin/python"],
+    
+    // Testing configuration
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": [
+      "tests",
+      "--tb=short", 
+      "-v",
+      "--asyncio-mode=auto"
+    ],
+    "python.testing.cwd": "${workspaceFolder}",
+    "python.testing.autoTestDiscoverOnSaveEnabled": true,
+    
+    // Test explorer configuration
+    "python.testing.pytestPath": "${workspaceFolder}/.venv/bin/pytest",
+    
+    // Environment variables for testing
+    "python.envFile": "${workspaceFolder}/.env.test",
+    
+
+    "makefile.configureOnOpen": false
+  }
+  

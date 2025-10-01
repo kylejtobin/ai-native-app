@@ -1,0 +1,43 @@
+{
+  "openai": {
+    "template_key": "openai",
+    "supports_native_thinking": true,
+    "allowed_markers": ["gpt-5", "openai"],
+    "available_models": [
+      {
+        "id": "gpt-5",
+        "api_id": "gpt-5",
+        "family": "gpt-5",
+        "tier": "general",
+        "tier_class": "deep",
+        "aliases": [],
+        "notes": "Use reasoning.effort 'low' or 'high' to control depth."
+      }
+    ]
+  },
+  "anthropic": {
+    "template_key": "anthropic",
+    "supports_native_thinking": true,
+    "allowed_markers": ["claude", "anthropic"],
+    "available_models": [
+      {
+        "id": "claude-sonnet-4-5-20250929",
+        "api_id": "claude-sonnet-4-5-20250929",
+        "family": "claude-sonnet",
+        "tier": "sonnet-4.5",
+        "tier_class": "standard",
+        "aliases": ["claude-sonnet-4.5"],
+        "notes": "Latest Sonnet - best balance of speed and intelligence."
+      },
+      {
+        "id": "claude-3-5-haiku-20241022",
+        "api_id": "claude-3-5-haiku-20241022",
+        "family": "claude-haiku",
+        "tier": "haiku-3.5",
+        "tier_class": "fast",
+        "aliases": ["claude-haiku-3.5"],
+        "notes": "Latest Haiku - fastest routing and tool selection."
+      }
+    ]
+  }
+}

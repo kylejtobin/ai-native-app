@@ -9,10 +9,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 <p align="center">
-  <img src="img/GSD_Snippet.png" alt="O(1) → Get Shit Done" width="700">
+  <img src="img/GSD_Snippet.png" alt="O(1) → Get Sh*t Done" width="700">
 </p>
 
-> **O(1)** means constant time—the fastest complexity class in computer science. No matter how big your problem gets, the solution takes the same time. **This architecture applies that principle to development:** skip accidental complexity, ship production systems, get shit done.
+*The term **O(1)** means constant time—the fastest complexity class in computer science. No matter how big your problem gets, the solution takes the same time. **This architecture applies that principle to development:** skip accidental complexity, ship production systems, **get sh\*t done**.*
 
 **Where architecture teaches itself through types, explicitness, and semantic richness**
 

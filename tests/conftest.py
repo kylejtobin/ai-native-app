@@ -13,13 +13,17 @@ from uuid import uuid4
 import pytest
 from dotenv import load_dotenv
 
-# Determine which env file to use based on test type
-# Integration tests need real infrastructure credentials
-if "integration" in str(Path(__file__).parent):
+# Determine which env file to use based on test markers/paths
+# Unit tests use .env.test (no infrastructure needed)
+# Integration tests use .env (real Docker stack)
+import os
+import sys
+
+if "integration" in " ".join(sys.argv):
     ENV_FILE = Path(__file__).parent.parent / ".env"
 else:
-    # Default to .env for all tests - integration tests need real stack
-    ENV_FILE = Path(__file__).parent.parent / ".env"
+    # Default to .env.test for unit tests
+    ENV_FILE = Path(__file__).parent.parent / ".env.test"
 
 load_dotenv(ENV_FILE, override=True)
 

@@ -58,4 +58,65 @@ class ModelRoute(StrEnum):
     OPENAI_GPT5 = "openai:gpt-5"
 
 
-__all__ = ["AIModelVendor", "ConversationStatus", "ModelRoute"]
+class StageStatus(StrEnum):
+    """Outcome of any transformation stage."""
+
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class ErrorCategory(StrEnum):
+    """Classification of pipeline errors for tracking and alerting.
+
+    Enables Logfire to group errors by type for pattern detection.
+    """
+
+    VALIDATION = "validation"
+    TRANSFORMATION = "transformation"
+    EXTERNAL_SERVICE = "external"
+    TIMEOUT = "timeout"
+    RESOURCE = "resource"
+    DEPENDENCY = "dependency"
+    UNKNOWN = "unknown"
+
+
+class SkipReason(StrEnum):
+    """Standard reasons for skipping pipeline stages.
+
+    Explicit categories for conditional execution logic.
+    """
+
+    CONDITION_NOT_MET = "condition_not_met"
+    ALREADY_PROCESSED = "already_processed"
+    DISABLED = "disabled"
+    DEPENDENCY_FAILED = "dependency_failed"
+    OPTIONAL = "optional"
+    CUSTOM = "custom"
+
+
+class StageCategory(StrEnum):
+    """Functional classification of transformation stages.
+
+    Helps Logfire visualize pipeline flow by transformation type.
+    """
+
+    INGESTION = "ingestion"
+    VALIDATION = "validation"
+    PARSING = "parsing"
+    TRANSFORMATION = "transformation"
+    ENRICHMENT = "enrichment"
+    CLASSIFICATION = "classification"
+    PERSISTENCE = "persistence"
+    NOTIFICATION = "notification"
+
+
+__all__ = [
+    "AIModelVendor",
+    "ConversationStatus",
+    "ErrorCategory",
+    "ModelRoute",
+    "SkipReason",
+    "StageCategory",
+    "StageStatus",
+]

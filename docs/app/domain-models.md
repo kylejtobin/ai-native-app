@@ -48,6 +48,188 @@ Before writing a method or function, consider:
 
 ---
 
+## Domain Primitives vs Aggregates
+
+Not all domain models are created equal. **Aggregates** are business entities with identity and lifecycle. **Domain primitives** are reusable abstractions that users compose directly.
+
+### Aggregates (e.g., Conversation, Order, User)
+
+**Characteristics:**
+- **Have identity:** `ConversationId` distinguishes one conversation from another
+- **Have lifecycle:** Created → Active → Archived → Deleted
+- **Coordinated through services:** Load from persistence, execute domain logic, save back
+- **Persisted as entities:** Stored in database with unique ID
+- **Business concepts:** Represent core domain entities
+
+**Example: Conversation**
+
+From [`src/app/domain/conversation.py`](../../src/app/domain/conversation.py):
+
+```python
+class Conversation(BaseModel):
+    """Conversation aggregate - orchestrates routing and model execution."""
+    
+    history: ConversationHistory  # Has identity: ConversationId
+    registry: ModelRegistry
+    model_pool: ModelPool
+    router: ModelClassifier | None = None
+    
+    @classmethod
+    async def load(cls, conv_id: ConversationId, redis: Redis, ...) -> Conversation | None:
+        """Load by ID - aggregates have identity."""
+        key = f"conversation:{conv_id.root}"
+        data = await redis.get(key)
+        # ... restore from persistence
+    
+    async def save(self, redis: Redis) -> None:
+        """Persist to storage - aggregates have lifecycle."""
+        key = f"conversation:{self.history.id.root}"
+        await redis.set(key, self.history.model_dump_json())
+    
+    async def send_message(self, text: str) -> Conversation:
+        """Business logic - aggregates encapsulate domain rules."""
+        # Complex multi-step workflow
+        return self.model_copy(update={"history": final_history})
+```
+
+**Usage pattern:**
+```python
+# Service coordinates aggregate lifecycle
+conversation = await Conversation.load(conv_id, redis, registry, pool)
+conversation = await conversation.send_message("Hello")
+await conversation.save(redis)
+```
+
+### Domain Primitives (e.g., Pipeline, Money, DateRange)
+
+**Characteristics:**
+- **No identity:** Two instances with same data are equal (value semantics)
+- **No lifecycle:** Created and immutably transformed, not persisted as entities
+- **No service coordination:** Users compose directly in their code
+- **Ephemeral:** Used for computation, not stored as database entities
+- **Reusable abstractions:** Library-like tools, not business concepts
+
+**Example: Pipeline**
+
+From [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py):
+
+```python
+class Pipeline(BaseModel):
+    """Domain primitive for tracking multi-stage transformations.
+    
+    Architecture Pattern:
+        This is a domain primitive, not a framework. Like tuple or dict,
+        users compose it into their specific pipelines. No service layer
+        needed - business logic lives in your transformation functions.
+    """
+    stages: tuple[Stage, ...] = ()  # No ID - value semantics
+    
+    model_config = ConfigDict(frozen=True)
+    
+    def append(self, stage: Stage) -> Pipeline:
+        """Append stage immutably, returning new Pipeline instance."""
+        return self.model_copy(update={"stages": (*self.stages, stage)})
+```
+
+**Usage pattern:**
+```python
+# Users compose directly - no service layer
+pipeline = Pipeline()
+stage = parse_stage(raw_input)
+pipeline = pipeline.append(stage)
+
+if pipeline.succeeded:
+    result = pipeline.latest_data
+```
+
+**No persistence as entity:**
+- You might log pipeline state to observability platform
+- You might persist the **final result** to database
+- But you don't persist Pipeline itself with an ID
+
+### Decision Framework: Aggregate or Primitive?
+
+**Create an aggregate when:**
+- ✅ Needs persistence with unique ID
+- ✅ Has lifecycle (create, update, delete operations)
+- ✅ Represents core business concept (User, Order, Conversation)
+- ✅ Requires service coordination (load → execute → save)
+- ✅ Identity matters (two instances with same data are different)
+
+**Create a domain primitive when:**
+- ✅ Reusable abstraction needed across domains
+- ✅ No identity (value semantics)
+- ✅ No lifecycle (create and transform, don't persist)
+- ✅ Users compose directly (no service layer)
+- ✅ Ephemeral (computed, not stored)
+
+**Examples:**
+
+| Concept | Type | Why |
+|---------|------|-----|
+| **Conversation** | Aggregate | Has ConversationId, persisted in Redis, lifecycle |
+| **Order** | Aggregate | Has OrderId, persisted in database, lifecycle |
+| **Pipeline** | Primitive | No ID, ephemeral, users compose directly |
+| **Money** | Primitive | Amount + currency, no ID, computed values |
+| **DateRange** | Primitive | Start + end dates, no ID, validation logic |
+| **EmailAddress** | Primitive | Validated string, no ID, extraction methods |
+
+### When Domain Primitives Shine
+
+**1. Computation-heavy abstractions**
+
+```python
+class Money(BaseModel):
+    """Domain primitive for currency calculations."""
+    amount: Decimal
+    currency: str
+    
+    def add(self, other: Money) -> Money:
+        """Add money (requires same currency)."""
+        if self.currency != other.currency:
+            raise ValueError("Cannot add different currencies")
+        return Money(amount=self.amount + other.amount, currency=self.currency)
+    
+    def multiply(self, factor: Decimal) -> Money:
+        """Multiply money by scalar."""
+        return Money(amount=self.amount * factor, currency=self.currency)
+
+# Users compose directly
+total = Money(amount=Decimal("100.00"), currency="USD")
+tax = total.multiply(Decimal("0.08"))
+final = total.add(tax)  # No service layer needed
+```
+
+**2. Validation-heavy value objects**
+
+```python
+class EmailAddress(RootModel[str]):
+    """Domain primitive for validated email addresses."""
+    root: str = Field(pattern=r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+    
+    @property
+    def domain(self) -> str:
+        """Extract domain from email."""
+        return self.root.split("@")[1]
+    
+    @property
+    def is_corporate(self) -> bool:
+        """Check if corporate email (not gmail, yahoo, etc.)."""
+        free_providers = ["gmail.com", "yahoo.com", "hotmail.com"]
+        return self.domain not in free_providers
+
+# Users compose directly
+email = EmailAddress("user@company.com")
+if email.is_corporate:
+    send_to_corporate_queue()
+```
+
+**3. Complex multi-step workflows**
+
+Pipeline is the canonical example: multi-stage transformations with typed outcomes, error tracking, and observability.
+
+---
+
 ## The Aggregate Root Pattern
 
 An aggregate root orchestrates a cluster of related models and contains the main business logic.
@@ -590,9 +772,11 @@ async def test_routing():
 ---
 
 **See Also:**
-- [`src/app/domain/conversation.py`](../../src/app/domain/conversation.py) - Main aggregate
+- [`src/app/domain/conversation.py`](../../src/app/domain/conversation.py) - Aggregate example
+- [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py) - Domain primitive example
 - [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py) - Value objects
 - [`src/app/domain/model_catalog.py`](../../src/app/domain/model_catalog.py) - Configuration models
+- [Pipeline Pattern](pipeline-pattern.md) - Domain primitives in depth
 - [Immutability](immutability.md) - Why frozen=True matters
 - [Service Patterns](service-patterns.md) - What goes in services instead
 

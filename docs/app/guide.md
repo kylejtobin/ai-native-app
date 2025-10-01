@@ -14,9 +14,10 @@ Each document covers one architectural pattern:
 
 | Document | What It Covers | When To Read It |
 |----------|----------------|-----------------|
-| **[type-system.md](type-system.md)** | Smart enums, RootModel wrappers, semantic types | Creating domain types |
-| **[domain-models.md](domain-models.md)** | Aggregates, rich behavior, factories | Building domain logic |
+| **[type-system.md](type-system.md)** | Smart enums, RootModel wrappers, semantic types, discriminated unions | Creating domain types |
+| **[domain-models.md](domain-models.md)** | Aggregates, rich behavior, factories, domain primitives | Building domain logic |
 | **[immutability.md](immutability.md)** | Frozen models, functional updates | Understanding state management |
+| **[pipeline-pattern.md](pipeline-pattern.md)** | Multi-stage transformations, observability | Tracking complex workflows |
 | **[service-patterns.md](service-patterns.md)** | Thin orchestration, boundaries | Building services |
 | **[data-flow.md](data-flow.md)** | Explicit transformations, traceability | Understanding flow |
 | **[llm-integration.md](llm-integration.md)** | Pydantic AI, structured outputs | Integrating LLMs |
@@ -29,6 +30,10 @@ Each document covers one architectural pattern:
 
 ### "I want to add a new domain model"
 
+**Critical first question:** Is this an **aggregate** (business entity with identity) or a **domain primitive** (reusable abstraction)?
+
+**If it's an aggregate (e.g., Order, User, Conversation):**
+
 **Learning path:**
 1. Read [type-system.md](type-system.md) → Understand semantic types
    - See "RootModel: Wrapping Primitives with Type Safety"
@@ -40,9 +45,13 @@ Each document covers one architectural pattern:
    - See "The Core Pattern: frozen=True"
    - See "Functional Updates with model_copy"
 
-**Then:** Look at `src/app/domain/conversation.py` for a complete example.
+**Then:** Look at `src/app/domain/conversation.py` for a complete aggregate example.
 
 **Key principle:** Business logic lives in models, not services. Your model should know its own rules.
+
+**If it's a domain primitive (e.g., Pipeline, Money, DateRange):**
+
+See ["I want to track multi-stage transformations"](#i-want-to-track-multi-stage-transformations) below for the Pipeline example, or read [domain-models.md](domain-models.md) for the distinction between aggregates and primitives.
 
 ### "I want to add business logic"
 
@@ -204,6 +213,89 @@ class MyModel(BaseModel):
     
     model_config = ConfigDict(frozen=True)
 ```
+
+### "I want to track multi-stage transformations"
+
+**Use case:** Document ingestion → validation → parsing → enrichment → persistence with error handling, skips, and observability.
+
+**What you need:** The [Pipeline domain primitive](../../src/app/domain/pipeline.py) — a type-safe, immutable, observable abstraction for tracking transformations.
+
+**Learning path:**
+
+1. **Understand the pattern** → [pipeline-pattern.md](pipeline-pattern.md)
+   - Complete guide to Pipeline abstraction
+   - When to use vs alternatives
+   - All components explained with examples
+   - Anti-patterns and testing strategies
+
+2. **Understand discriminated unions** → [type-system.md#discriminated-unions-type-safe-dispatch](type-system.md#discriminated-unions-type-safe-dispatch)
+   - How `Stage = SuccessStage | FailedStage | SkippedStage` works
+   - Type narrowing with `isinstance()`
+   - Exhaustive pattern matching
+
+3. **See Pipeline in context** → [data-flow.md#the-pipeline-domain-model](data-flow.md#the-pipeline-domain-model)
+   - Pipeline as explicit transformation flow
+   - Integration with Logfire
+   - When to use vs when NOT to use
+
+4. **Study the implementation** → [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py)
+   - Full implementation (775 lines)
+   - RootModel wrappers, model validators, computed properties
+   - Rich observability patterns
+
+5. **See real tests** → [`tests/unit/domain/test_pipeline.py`](../../tests/unit/domain/test_pipeline.py)
+   - How to build stages
+   - How to test discriminated unions
+   - How to test model validators
+
+**Key pattern:** Build transformation functions that return `Stage` union based on outcome, then `pipeline.append()` immutably tracks the flow.
+
+**Example structure:**
+
+```python
+def parse_stage(raw_input: RawData) -> SuccessStage | FailedStage:
+    """Transformation function returns Stage union."""
+    start = datetime.now(UTC)
+    try:
+        parsed = parse(raw_input)
+        return SuccessStage(
+            status=StageStatus.SUCCESS,
+            category=StageCategory.PARSING,
+            name=StageName("parse"),
+            data=parsed,
+            start_time=start,
+            end_time=datetime.now(UTC)
+        )
+    except Exception as e:
+        return FailedStage(
+            status=StageStatus.FAILED,
+            category=StageCategory.PARSING,
+            error_category=ErrorCategory.VALIDATION,
+            name=StageName("parse"),
+            error=ErrorMessage(str(e)),
+            start_time=start,
+            end_time=datetime.now(UTC)
+        )
+
+# Execute pipeline
+pipeline = Pipeline()
+stage = parse_stage(raw_input)
+pipeline = pipeline.append(stage)
+
+# Check results
+if pipeline.succeeded:
+    result = pipeline.latest_data  # Type-safe
+else:
+    print(f"Errors: {pipeline.error_summary.total_errors}")
+```
+
+**Why Pipeline is a domain primitive, not an aggregate:**
+- No identity (two pipelines with same stages are equal)
+- No lifecycle (created and immutably transformed)
+- No service coordination (users compose directly)
+- Ephemeral (used for computation, not persisted as entity)
+
+This is a **library abstraction** like `tuple` or `dict`, not a business entity like `Conversation`.
 
 ---
 

@@ -339,6 +339,7 @@ ai-native-app/
 │   ├── philosophy.md        # ⭐ The "why" - Read this first
 │   ├── install.md           # Platform-specific setup
 │   ├── development.md       # Daily workflow and practices
+│   ├── documentation-strategy.md # 📝 How to maintain docs
 │   ├── infra/               # Infrastructure deep dives
 │   │   ├── guide.md         # 🧭 Navigation by scenario
 │   │   ├── systems.md       # What each component does
@@ -373,3 +374,6 @@ Now explore:
 - Follow [**Development Guide**](docs/development.md) for daily workflows
 - Check [**Service Patterns**](docs/app/service-patterns.md) for implementation guidance
 - Review [**Testing**](docs/app/testing.md) for quality practices
+
+**If you want to contribute:**
+- Read [**Documentation Strategy**](docs/documentation-strategy.md) - How to maintain "architecture as curriculum"

@@ -117,7 +117,13 @@ class ModelRoute(StrEnum):
 
 ## RootModel: Wrapping Primitives with Type Safety
 
-Pydantic's `RootModel` lets you wrap primitives (UUID, str, int) with domain meaning and behavior.
+Pydantic's `RootModel` lets you wrap primitives (UUID, str, int) with domain meaning, validation, and behavior.
+
+**Why wrap primitives?**
+- **Type safety:** Can't accidentally mix `MessageId` and `ConversationId` even though both are UUIDs
+- **Validation:** Enforce constraints at construction (format, range, patterns)
+- **Semantic meaning:** `StageName` is more expressive than `str`
+- **Observability:** Logfire/OpenTelemetry see domain types, not generic primitives
 
 ### Type-Safe Identifiers
 
@@ -191,6 +197,91 @@ class ModelCatalog(RootModel[dict[AIModelVendor, VendorCatalog]]):
 - Validates structure on construction
 - Enum keys ensure type safety at compile time
 - Can't accidentally pass wrong vendor type
+
+### Semantic Types for Observability
+
+From [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py):
+
+```python
+class StageName(RootModel[str]):
+    """Stage identifier with validation and semantic meaning.
+    
+    Wraps str to provide:
+        - Type safety: Can't accidentally pass wrong string type
+        - Validation: Enforces naming conventions at construction
+        - Observability: Logfire displays as domain type, not generic string
+    
+    Validation Rules:
+        - Non-empty (min 1 char)
+        - Max 100 characters
+        - Alphanumeric, hyphens, underscores only (safe for logs/metrics)
+    """
+    root: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    model_config = ConfigDict(frozen=True)
+
+
+class ErrorMessage(RootModel[str]):
+    """Explicit error message from failed transformation.
+    
+    Wraps error strings to:
+        - Enforce non-empty requirement (failures must be documented)
+        - Provide semantic type for Logfire error tracking
+        - Set reasonable length limits for log storage
+    
+    Philosophy:
+        Every failure must explain itself. An empty error message is
+        as useless as no error at all. This type enforces that principle
+        at construction time.
+    """
+    root: str = Field(min_length=1, max_length=1000)
+    model_config = ConfigDict(frozen=True)
+
+
+class CustomSkipReason(RootModel[str]):
+    """Custom skip reason when standard SkipReason enums don't apply.
+    
+    Used exclusively with SkipReason.CUSTOM. Model validator on SkippedStage
+    enforces this relationship at construction time.
+    
+    Why separate from ErrorMessage?
+        Different semantic meaning: skip reasons explain conditional
+        execution logic, error messages explain failures. Logfire can
+        filter/group them independently.
+    """
+    root: str = Field(min_length=1, max_length=500)
+    model_config = ConfigDict(frozen=True)
+```
+
+**Why not just use `str`?**
+
+```python
+# ❌ Without RootModel - no type safety or validation
+def create_stage(name: str):
+    # Can pass empty string, invalid chars, or wrong variable
+    pass
+
+create_stage("")  # Empty - but valid str!
+create_stage("invalid name!")  # Special chars - but valid str!
+create_stage(error_message)  # Wrong semantic type - but valid str!
+
+# ✅ With RootModel - validated and type-safe
+def create_stage(name: StageName):
+    # Must pass StageName, which guarantees valid format
+    pass
+
+create_stage(StageName("parse-documents"))  # ✅ Valid
+create_stage(StageName(""))  # ❌ ValidationError: min_length
+create_stage(StageName("invalid name!"))  # ❌ ValidationError: pattern
+create_stage(ErrorMessage("error text"))  # ❌ Type error: wrong semantic type
+```
+
+**Observability benefit:**
+
+When you log or trace these values with Logfire/OpenTelemetry:
+- **With RootModel:** `StageName("parse-documents")` → displays as `StageName` type
+- **Without RootModel:** `"parse-documents"` → displays as generic `str`
+
+This makes debugging easier: you can filter by "all StageName values" vs "all ErrorMessage values" in your observability platform, even though both are strings under the hood.
 
 ## Computed Properties: Derived Data with Caching
 
@@ -394,9 +485,162 @@ class ModelRegistry(BaseModel):
 - Business logic (resolve_or_default) uses composed data
 - Single source of truth for model availability
 
+## Discriminated Unions: Type-Safe Dispatch
+
+When an operation has multiple possible outcomes with different data shapes, use discriminated unions instead of Optional fields or conditional logic.
+
+**What they are:** Union types where Pydantic automatically dispatches to the correct type based on a "discriminator" field.
+
+**Why they matter:** Eliminates invalid states (can't have both success data and error), provides type narrowing (IDE knows which fields exist), and enables exhaustive pattern matching.
+
+### The Pattern
+
+From [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py):
+
+```python
+# Three distinct outcomes, each with its own schema
+class SuccessStage(BaseModel):
+    status: Literal[StageStatus.SUCCESS]  # Discriminator value
+    category: StageCategory
+    name: StageName
+    data: BaseModel  # Only success has data
+    start_time: datetime
+    end_time: datetime
+    
+    model_config = ConfigDict(frozen=True)
+    
+    @computed_field
+    @property
+    def duration_ms(self) -> float:
+        """Only success and failed have duration."""
+        delta = self.end_time - self.start_time
+        return delta.total_seconds() * 1000
+
+
+class FailedStage(BaseModel):
+    status: Literal[StageStatus.FAILED]  # Discriminator value
+    category: StageCategory
+    name: StageName
+    error: ErrorMessage  # Only failed has error
+    error_category: ErrorCategory  # For grouping/alerting
+    start_time: datetime
+    end_time: datetime
+    
+    model_config = ConfigDict(frozen=True)
+    
+    @computed_field
+    @property
+    def duration_ms(self) -> float:
+        """Time until failure occurred."""
+        delta = self.end_time - self.start_time
+        return delta.total_seconds() * 1000
+
+
+class SkippedStage(BaseModel):
+    status: Literal[StageStatus.SKIPPED]  # Discriminator value
+    category: StageCategory
+    name: StageName
+    skip_reason: SkipReason
+    custom_reason: CustomSkipReason | None = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    
+    model_config = ConfigDict(frozen=True)
+
+
+# Union: Pydantic dispatches on 'status' field
+Stage = SuccessStage | FailedStage | SkippedStage
+```
+
+### Using Discriminated Unions
+
+**Type narrowing with isinstance:**
+
+```python
+def process_stage(stage: Stage):
+    """Exhaustive handling of all stage types."""
+    if isinstance(stage, SuccessStage):
+        # Type checker knows stage.data exists
+        print(f"Success: {stage.data}")
+        print(f"Duration: {stage.duration_ms}ms")
+    elif isinstance(stage, FailedStage):
+        # Type checker knows stage.error exists
+        print(f"Failed: {stage.error.root}")
+        print(f"Category: {stage.error_category.value}")
+    elif isinstance(stage, SkippedStage):
+        # Type checker knows stage.skip_reason exists
+        print(f"Skipped: {stage.skip_reason.value}")
+    # Type checker ensures all cases are handled!
+```
+
+**Automatic deserialization:**
+
+```python
+# Pydantic automatically picks the right type based on 'status' field
+data = {"status": "success", "name": "parse", "data": {...}, ...}
+stage = Stage.model_validate(data)  # → SuccessStage instance
+
+data = {"status": "failed", "error": "Timeout", ...}
+stage = Stage.model_validate(data)  # → FailedStage instance
+```
+
+### Decision Framework: When to Use
+
+**Use discriminated unions when:**
+- ✅ Multiple outcomes with different data shapes (success/failure/skipped)
+- ✅ Need type safety (can't access .data on FailedStage)
+- ✅ Want exhaustive checking (type checker ensures all cases handled)
+- ✅ Clear discriminator field (status, type, kind)
+
+**Use Optional fields when:**
+- ✅ Field is truly optional (may or may not be present)
+- ✅ Same data shape regardless
+- ✅ No conditional logic based on presence
+
+**DON'T use:**
+- ❌ Multiple Optional fields for different outcomes (allows invalid states)
+- ❌ Single class with type field and conditional logic (no type safety)
+- ❌ Inheritance without union (loses automatic dispatch)
+
+### Real-World Benefits
+
+**From [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py):**
+
+```python
+class Pipeline(BaseModel):
+    """Tracks multi-stage transformations with type-safe outcomes."""
+    
+    stages: tuple[Stage, ...] = ()  # Can contain any stage type
+    
+    @property
+    def latest_success(self) -> SuccessStage | None:
+        """Find most recent successful stage."""
+        for stage in reversed(self.stages):
+            if isinstance(stage, SuccessStage):
+                return stage  # Type narrowed to SuccessStage
+        return None
+    
+    @property
+    def latest_data(self) -> BaseModel:
+        """Extract data from latest success (or raise)."""
+        success = self.latest_success
+        if success is None:
+            raise ValueError("No successful stages in pipeline")
+        return success.data  # Type checker knows .data exists
+```
+
+**No `type: ignore` needed. No runtime type checks. Just clean, safe code.**
+
+---
+
 ## Model Validators: Cross-Field Business Rules
 
-Use `@model_validator` when business rules span multiple fields.
+Use `@model_validator` when business rules require multiple fields to be correct together.
+
+**What they are:** Validation functions that run during model construction and can access all fields simultaneously.
+
+**Why they matter:** Enforces invariants at construction time, making it impossible to create instances in invalid states.
+
+### Simple Cross-Field Validation
 
 From [`src/app/domain/model_catalog.py`](../../src/app/domain/model_catalog.py):
 
@@ -443,6 +687,102 @@ class VendorCatalog(BaseModel):
 - Can raise errors for invalid combinations
 - Model construction fails fast if rules are violated
 
+### Conditional Requirements
+
+From [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py):
+
+```python
+class SkippedStage(BaseModel):
+    """Skipped pipeline stage with categorized reason."""
+    
+    status: Literal[StageStatus.SKIPPED]
+    category: StageCategory
+    name: StageName
+    skip_reason: SkipReason  # Enum: DISABLED, CUSTOM, etc.
+    custom_reason: CustomSkipReason | None = None  # Only with CUSTOM
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    
+    model_config = ConfigDict(frozen=True)
+    
+    @model_validator(mode="after")
+    def require_custom_reason_if_custom(self) -> SkippedStage:
+        """Enforce relationship between skip_reason and custom_reason.
+        
+        Business Rules:
+            1. SkipReason.CUSTOM requires custom_reason (explain yourself!)
+            2. Other SkipReason values forbid custom_reason (use enum)
+        
+        Why enforce this?
+            Prevents ambiguous states like:
+            - CUSTOM with no explanation (unhelpful)
+            - DISABLED with custom text (confusing: which is authoritative?)
+        
+        Raises:
+            ValueError: If rules violated
+        """
+        if self.skip_reason == SkipReason.CUSTOM and self.custom_reason is None:
+            raise ValueError("custom_reason required when skip_reason is CUSTOM")
+        if self.skip_reason != SkipReason.CUSTOM and self.custom_reason is not None:
+            raise ValueError("custom_reason only allowed when skip_reason is CUSTOM")
+        return self
+```
+
+**Usage guarantees type safety:**
+
+```python
+# ✅ Valid - standard skip reason
+skipped = SkippedStage(
+    status=StageStatus.SKIPPED,
+    category=StageCategory.NOTIFICATION,
+    name=StageName("send-email"),
+    skip_reason=SkipReason.DISABLED,
+    custom_reason=None  # Must be None
+)
+
+# ✅ Valid - custom skip reason with explanation
+skipped = SkippedStage(
+    status=StageStatus.SKIPPED,
+    category=StageCategory.ENRICHMENT,
+    name=StageName("geocode"),
+    skip_reason=SkipReason.CUSTOM,
+    custom_reason=CustomSkipReason("Address already geocoded in cache")
+)
+
+# ❌ Raises ValidationError - CUSTOM without explanation
+skipped = SkippedStage(
+    skip_reason=SkipReason.CUSTOM,
+    custom_reason=None  # Error!
+    ...
+)
+
+# ❌ Raises ValidationError - DISABLED with custom reason
+skipped = SkippedStage(
+    skip_reason=SkipReason.DISABLED,
+    custom_reason=CustomSkipReason("Custom text")  # Error!
+    ...
+)
+```
+
+### Decision Framework: Field vs Model Validators
+
+**Use `@field_validator` when:**
+- ✅ Validation concerns a single field
+- ✅ No need to access other fields
+- ✅ Simple constraints (range, format, length)
+- Example: `@field_validator("email") def check_format(...)`
+
+**Use `@model_validator` when:**
+- ✅ Multiple fields must be correct together
+- ✅ Conditional requirements between fields
+- ✅ Complex business rules spanning fields
+- Example: `start_date < end_date`, `if type == X then field Y required`
+
+**Use `computed_field` when:**
+- ✅ Value derivable from other fields
+- ✅ No validation, just transformation
+- ✅ Read-only (doesn't modify anything)
+- Example: `@computed_field def full_name(self) -> str: return f"{self.first} {self.last}"`
+
 ## Benefits of This Approach
 
 **Type Safety:**
@@ -478,6 +818,16 @@ class VendorCatalog(BaseModel):
 - `status: str` with comments saying "must be 'active', 'archived', or 'deleted'"
 - Reality: Typos cause bugs, no autocomplete, invalid states possible
 - Use StrEnum: `status: ConversationStatus`
+
+❌ **DON'T use Optional fields for different outcomes**
+- Single class with `data: BaseModel | None` and `error: str | None`
+- Reality: Can construct with both or neither, runtime checks everywhere
+- Use discriminated unions: `SuccessResult | FailedResult`
+
+❌ **DON'T use type field without union**
+- `result_type: str` with if/else to check type and cast
+- Reality: No type safety, need `type: ignore`, easy to miss cases
+- Use discriminated unions with `Literal` discriminator
 
 ❌ **DON'T skip field validators for complex rules**
 - "I'll just validate in the service layer"
@@ -515,6 +865,7 @@ class VendorCatalog(BaseModel):
 - [`src/app/domain/domain_type.py`](../../src/app/domain/domain_type.py) - Smart enums
 - [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py) - RootModel patterns
 - [`src/app/domain/model_catalog.py`](../../src/app/domain/model_catalog.py) - Complex composition
+- [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py) - Discriminated unions, semantic types
 - [Domain Models](domain-models.md) - Rich model patterns
 - [Immutability](immutability.md) - Why frozen models matter
 

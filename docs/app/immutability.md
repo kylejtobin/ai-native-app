@@ -182,6 +182,114 @@ conversation = await conversation.send_message("Goodbye")  # State 4
 assert len(conversation.history.messages) == 6  # 3 user + 3 assistant
 ```
 
+### Immutable Collections: The Pipeline Pattern
+
+Pipeline demonstrates comprehensive immutability: frozen model + immutable collection + functional updates.
+
+From [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py):
+
+```python
+class Pipeline(BaseModel):
+    """Immutable pipeline orchestrator tracking multi-stage transformations."""
+    
+    stages: tuple[Stage, ...] = ()  # ← Tuple: immutable collection
+    
+    model_config = ConfigDict(frozen=True)  # ← Frozen: immutable model
+    
+    def append(self, stage: Stage) -> Pipeline:
+        """Append stage immutably, returning new Pipeline instance.
+        
+        Immutability Pattern:
+            Original pipeline unchanged. Returns new Pipeline with stage added.
+            This enables time-travel debugging and safe concurrent access.
+        """
+        # Tuple unpacking creates new tuple with appended stage
+        # model_copy returns new Pipeline instance (frozen=True prevents mutation)
+        return self.model_copy(update={"stages": (*self.stages, stage)})
+```
+
+**Why this matters for complex workflows:**
+
+```python
+# Track transformation history immutably
+pipeline = Pipeline()
+
+# Stage 1: Parse
+stage1 = SuccessStage(name=StageName("parse"), data=parsed_data, ...)
+pipeline = pipeline.append(stage1)  # → New Pipeline with 1 stage
+
+# Stage 2: Validate
+stage2 = SuccessStage(name=StageName("validate"), data=validated_data, ...)
+pipeline = pipeline.append(stage2)  # → New Pipeline with 2 stages
+
+# Stage 3: Enrich (fails!)
+stage3 = FailedStage(name=StageName("enrich"), error=ErrorMessage("API timeout"), ...)
+pipeline = pipeline.append(stage3)  # → New Pipeline with 3 stages
+
+# Can inspect any point in history
+assert len(pipeline.stages) == 3
+assert pipeline.failed  # True (has FailedStage)
+assert pipeline.error_summary.total_errors == 1
+
+# Original states never mutated - safe for concurrent access
+```
+
+**The pattern in practice:**
+
+```python
+def execute_stage(pipeline: Pipeline, stage_fn: Callable) -> Pipeline:
+    """Execute stage function and append result to pipeline.
+    
+    Pipeline is immutable - original unchanged, new instance returned.
+    """
+    stage = stage_fn()  # Returns SuccessStage | FailedStage | SkippedStage
+    return pipeline.append(stage)  # Returns new Pipeline
+
+# Build pipeline through functional composition
+pipeline = Pipeline()
+pipeline = execute_stage(pipeline, parse_stage)
+pipeline = execute_stage(pipeline, validate_stage)
+pipeline = execute_stage(pipeline, enrich_stage)
+
+# Each step returns new instance
+# Original Pipeline() instance still has 0 stages
+```
+
+**Compared to mutable approach:**
+
+```python
+# ❌ Mutable - dangerous!
+class MutablePipeline:
+    def __init__(self):
+        self.stages: list[Stage] = []  # Mutable!
+    
+    def append(self, stage: Stage) -> None:
+        self.stages.append(stage)  # Mutation!
+
+# Multiple problems
+pipeline = MutablePipeline()
+pipeline.append(stage1)
+
+# Problem 1: No way to access previous state
+# Problem 2: Concurrent access requires locks
+# Problem 3: Hard to debug (what changed when?)
+# Problem 4: Can't undo or compare states
+
+# ✅ Immutable - safe!
+pipeline = Pipeline()
+pipeline_after_stage1 = pipeline.append(stage1)
+
+# Can compare states
+assert len(pipeline.stages) == 0  # Original unchanged
+assert len(pipeline_after_stage1.stages) == 1  # New state
+
+# No locks needed for concurrent reads
+# Easy debugging (inspect any state)
+# Can undo by keeping references to previous states
+```
+
+**Key insight:** Immutable collections (tuple) + frozen models + functional updates = complete immutability and all its benefits.
+
 ## Concurrency Safety
 
 Because `Conversation` is immutable (`frozen=True`), multiple async tasks can safely read from the same instance without locks. Each call to `send_message()` returns a new instance, so concurrent operations never interfere with each other.
@@ -371,6 +479,8 @@ conversation = await conversation.send_message("Thanks!")  # +2 messages
 **See Also:**
 - [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py) - Immutable value objects
 - [`src/app/domain/conversation.py`](../../src/app/domain/conversation.py) - Immutable aggregate
+- [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py) - Immutable collections pattern
 - [Domain Models](domain-models.md) - Rich model patterns
+- [Pipeline Pattern](pipeline-pattern.md) - Comprehensive immutability example
 - [Data Flow](data-flow.md) - Traceability with immutable operations
 

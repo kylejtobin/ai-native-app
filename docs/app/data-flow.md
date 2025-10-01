@@ -90,6 +90,95 @@ async def send_message(
 text → StoredMessage → updated_history → routing → spec → model → result → response_messages → final_history → new_Conversation
 ```
 
+### The Pipeline Domain Model
+
+The conceptual pipeline described above can be made explicit using the [Pipeline domain model](../../src/app/domain/pipeline.py).
+
+**What it is:** A type-safe, immutable, observable abstraction for tracking multi-stage transformations. Uses discriminated unions to represent stage outcomes (Success/Failed/Skipped) and provides rich observability for Logfire.
+
+**When to use:**
+- ✅ Multi-stage transformations with branching logic (success → continue, failure → halt)
+- ✅ Need to track errors, skips, and successes uniformly
+- ✅ Want rich observability (duration, error categorization, flow visualization)
+- ✅ Complex pipelines where order and outcomes matter
+
+**When NOT to use:**
+- ❌ Simple single-step transformations (use direct function)
+- ❌ Service orchestration across aggregates (use service layer)
+- ❌ HTTP request/response (use FastAPI routers)
+- ❌ Simple sequential operations with no branching (overkill)
+
+**Example flow:**
+
+```python
+from app.domain.pipeline import Pipeline, SuccessStage, FailedStage, StageName
+from app.domain.domain_type import StageStatus, StageCategory, ErrorCategory
+from datetime import datetime, UTC
+
+# Start with empty pipeline
+pipeline = Pipeline()
+
+# Stage 1: Ingest data
+start = datetime.now(UTC)
+try:
+    data = ingest_data()
+    stage = SuccessStage(
+        status=StageStatus.SUCCESS,
+        category=StageCategory.INGESTION,
+        name=StageName("ingest"),
+        data=data,
+        start_time=start,
+        end_time=datetime.now(UTC)
+    )
+except Exception as e:
+    stage = FailedStage(
+        status=StageStatus.FAILED,
+        category=StageCategory.INGESTION,
+        error_category=ErrorCategory.EXTERNAL_SERVICE,
+        name=StageName("ingest"),
+        error=ErrorMessage(str(e)),
+        start_time=start,
+        end_time=datetime.now(UTC)
+    )
+pipeline = pipeline.append(stage)
+
+# Check if we can continue
+if pipeline.failed:
+    logger.error(f"Pipeline failed: {pipeline.error_summary.total_errors} errors")
+    return pipeline
+
+# Stage 2: Parse data
+data = pipeline.latest_data  # Type-safe: raises if no success
+start = datetime.now(UTC)
+parsed = parse_data(data)
+stage = SuccessStage(
+    status=StageStatus.SUCCESS,
+    category=StageCategory.PARSING,
+    name=StageName("parse"),
+    data=parsed,
+    start_time=start,
+    end_time=datetime.now(UTC)
+)
+pipeline = pipeline.append(stage)
+
+# Export for observability
+attrs = pipeline.to_logfire_attributes()
+with logfire.span("data_pipeline", **attrs.root):
+    # Pipeline metrics visible in Logfire
+    logger.info(f"Pipeline completed in {pipeline.total_duration_ms}ms")
+```
+
+**Key benefits:**
+- **Type safety:** Can't access `.data` on `FailedStage` (doesn't exist)
+- **Immutability:** Each `append()` returns new Pipeline, original unchanged
+- **Observability:** Structured export for Logfire with error categorization
+- **Traceability:** Complete history of all stages, successes, failures, skips
+
+**For detailed patterns, see:**
+- [Type System: Discriminated Unions](type-system.md#discriminated-unions-type-safe-dispatch) - How Stage union works
+- [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py) - Full implementation
+- [`tests/unit/domain/test_pipeline.py`](../../tests/unit/domain/test_pipeline.py) - Usage examples
+
 ## Tracing State Through Layers
 
 The data flows through our architecture with clear transformations at each boundary.
@@ -451,6 +540,7 @@ conversation = await Conversation.load(
 **See Also:**
 - [`src/app/domain/conversation.py`](../../src/app/domain/conversation.py) - Full flow implementation
 - [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py) - Immutable state
+- [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py) - Explicit multi-stage transformations
 - [`src/app/api/routers/conversation.py`](../../src/app/api/routers/conversation.py) - HTTP layer
 - [Immutability](immutability.md) - Why immutability enables traceability
 - [Domain Models](domain-models.md) - Domain logic organization

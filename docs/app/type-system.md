@@ -4,6 +4,59 @@
 
 This document shows the type-driven patterns we use in this codebase, with real examples from `src/app/domain/`.
 
+> **Principle: Every Type Teaches**
+>
+> Most codebases use primitive types everywhere—strings, ints, dicts—that tell you nothing about business meaning. This architecture uses smart enums for constrained choices, RootModel wrappers for semantic meaning, computed properties for derived values, and composition for complex structures.
+>
+> Types become self-documenting, invalid states become impossible, and the domain logic lives with the data.
+>
+> The shift from primitive obsession to semantic types, from runtime validation to compile-time safety, from documentation that goes stale to types that can't lie.
+>
+> See: [philosophy.md](../philosophy.md) "Every Type Teaches"
+
+---
+
+## Decision Framework: Choosing the Right Type Pattern
+
+Before creating a new type, consider:
+
+**Use StrEnum when:**
+- ✅ Fixed set of known values (status, categories)
+- ✅ Values need to be JSON-serializable strings
+- ✅ Type safety prevents typos/invalid values
+- ✅ Might add behavior later (methods on enum)
+
+**Use RootModel when:**
+- ✅ Wrapping a primitive with domain meaning (UUID → ConversationId)
+- ✅ Need validation on construction
+- ✅ Want to add methods to primitive types
+- ✅ Type should be opaque (can't accidentally mix IDs)
+
+**Use BaseModel when:**
+- ✅ Multiple related fields
+- ✅ Need computed properties
+- ✅ Complex validation across fields
+- ✅ Composition of multiple concepts
+
+**Use computed_field when:**
+- ✅ Value derivable from other fields
+- ✅ No need to store separately
+- ✅ Always correct (can't drift from source)
+- ✅ Expensive to compute (cached by Pydantic)
+
+**Use Literal when:**
+- ✅ Single-use discriminator in union
+- ✅ Type narrowing for pattern matching
+- ✅ No need for enum overhead
+
+**Examples from our codebase:**
+- **ConversationStatus** → StrEnum (fixed states, might add state machine logic)
+- **MessageId** → RootModel[UUID] (semantic meaning, opaque ID)
+- **Conversation** → BaseModel (complex aggregate with multiple fields)
+- **ConversationHistory.message_content** → computed_field (derived from messages tuple)
+
+---
+
 ## Smart Enums: Business Logic in Constants
 
 Enums aren't just string constants—they're behavioral types that encode business rules.
@@ -414,10 +467,54 @@ class VendorCatalog(BaseModel):
 
 ---
 
+## Anti-Patterns: What NOT to Do
+
+❌ **DON'T use `dict[str, Any]` for domain data**
+- "I'll just use a dict, it's flexible"
+- Reality: No validation, no IDE help, typos become runtime errors
+- Use BaseModel with explicit fields
+
+❌ **DON'T use strings where enums prevent typos**
+- `status: str` with comments saying "must be 'active', 'archived', or 'deleted'"
+- Reality: Typos cause bugs, no autocomplete, invalid states possible
+- Use StrEnum: `status: ConversationStatus`
+
+❌ **DON'T skip field validators for complex rules**
+- "I'll just validate in the service layer"
+- Reality: Models can be constructed in invalid states, validation scattered
+- Use `@field_validator` and `@model_validator` in the model
+
+❌ **DON'T use Optional without default**
+- `field: str | None` with no `= None`
+- Reality: Confusing API, unclear if None is valid or error
+- Either `field: str` (required) or `field: str | None = None` (optional with default)
+
+❌ **DON'T put business logic outside the type**
+- Helper functions that operate on models: `def calculate_total(conversation): ...`
+- Reality: Logic divorced from data, scattered across codebase
+- Add methods to the model: `conversation.calculate_total()`
+
+❌ **DON'T use mutable collections in frozen models**
+- `messages: list[Message] = []` in a `frozen=True` model
+- Reality: Can still mutate the list even though model is frozen
+- Use `tuple[Message, ...] = ()` for immutable collections
+
+❌ **DON'T create "wrapper" types that add no value**
+- `class UserName(RootModel[str]): ...` with no validation or methods
+- Reality: Just ceremony, no benefit
+- Only wrap primitives when adding semantic meaning or behavior
+
+❌ **DON'T use computed_field for expensive operations without caching**
+- Computed property that does database queries or heavy computation
+- Reality: Accessed multiple times, recomputes each time
+- Pydantic caches computed_field on frozen models, but still avoid heavy ops
+
+---
+
 **See Also:**
 - [`src/app/domain/domain_type.py`](../../src/app/domain/domain_type.py) - Smart enums
 - [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py) - RootModel patterns
 - [`src/app/domain/model_catalog.py`](../../src/app/domain/model_catalog.py) - Complex composition
-- `domain-models.md` - Rich model patterns
-- `immutability.md` - Why frozen models matter
+- [Domain Models](domain-models.md) - Rich model patterns
+- [Immutability](immutability.md) - Why frozen models matter
 

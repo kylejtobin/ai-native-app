@@ -4,6 +4,18 @@
 
 This template implements a sophisticated configuration system that handles API keys, database passwords, connection strings, and application settings—all type-safe, all version-controlled (except the secrets themselves), and all generated from a single source of truth.
 
+> **Principle: Every Secret is Derived**
+>
+> Configuration proliferates. You need the database password in the connection string, in the backup script, in the monitoring config. Each place is an opportunity for inconsistency. Each manual update is a place for typos.
+>
+> The template approach: one source of truth (the password), one generation script, many derived configurations. Change the password once, regenerate everything, all connection strings update automatically.
+>
+> Duplication of data requires duplication of maintenance. Derivation eliminates sync problems by having only one source of truth.
+>
+> See: [philosophy.md](../philosophy.md) "Every Secret is Derived"
+
+**🔑 Quick Start:** Need to add API keys? See [`secrets/README.md`](../../secrets/README.md) for step-by-step instructions on obtaining and configuring Anthropic, OpenAI, and Tavily API keys.
+
 ---
 
 ## The Problem: Configuration Hell
@@ -847,6 +859,50 @@ RUN --mount=type=secret,id=anthropic \
 # Build with secret
 docker build --secret id=anthropic,src=secrets/api/anthropic .
 ```
+
+---
+
+## Anti-Patterns: What NOT to Do
+
+❌ **DON'T manually edit .env directly**
+- "I'll just change the password in .env"
+- Reality: Gets overwritten next time you run `make config`
+- Always update secrets/infra/* and regenerate
+
+❌ **DON'T commit secrets to git (even temporarily)**
+- "I'll commit this test API key then remove it later"
+- Reality: Git history is forever, secrets are compromised
+- Use `.gitignore` and NEVER commit secrets/api/* or secrets/infra/*
+
+❌ **DON'T duplicate configuration values**
+- "I'll define DATABASE_PASSWORD and also put it in DATABASE_URL manually"
+- Reality: They drift, bugs emerge, maintenance nightmare
+- Derive connection strings from components
+
+❌ **DON'T skip type validation**
+- "I'll just use `os.getenv()` everywhere"
+- Reality: Typos become runtime errors, no IDE help, wrong types
+- Use Pydantic Settings for validation and autocomplete
+
+❌ **DON'T mix configuration sources**
+- "I'll load some from .env, some from secrets/*, some from AWS Secrets Manager"
+- Reality: Nobody knows where values come from, debugging impossible
+- One source per environment (files for dev, secret store for prod)
+
+❌ **DON'T use same secrets for dev and prod**
+- "These credentials are just for testing anyway"
+- Reality: Accidental prod modifications, security breaches
+- Always use different credentials per environment
+
+❌ **DON'T store secrets in application code**
+- `API_KEY = "sk-abc123..."`
+- Reality: Leaked in logs, PRs, CI outputs
+- Load from environment only
+
+❌ **DON'T forget to rotate secrets**
+- "We set these passwords 2 years ago"
+- Reality: Eventual compromise, compliance violations
+- Rotate regularly, document process
 
 ---
 

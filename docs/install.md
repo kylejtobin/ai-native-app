@@ -153,6 +153,12 @@ echo "tvly-your-key-here" > secrets/api/tavily
 
 **Don't have API keys?** The stack still works! Ollama provides local LLM inference.
 
+**Need detailed setup instructions?** → See [`secrets/README.md`](../secrets/README.md) for:
+- How to obtain API keys from each provider
+- Step-by-step registration guides
+- Troubleshooting and verification
+- Security best practices
+
 ### 3. Start the Stack
 
 ```bash
@@ -164,7 +170,7 @@ make dev
 1. Generates `.env` from template
 2. Loads your API keys (if present)
 3. Generates random passwords for databases
-4. Starts 7 containers (PostgreSQL, Redis, Neo4j, Qdrant, MinIO, Ollama, FastAPI)
+4. Starts all services: data layer (PostgreSQL, Redis, Neo4j, Qdrant, MinIO), LLM inference (Ollama), and your API
 5. Runs initialization scripts (databases, buckets)
 6. Shows "✅ Services ready"
 
@@ -179,11 +185,37 @@ Open your browser to verify services:
 - **Neo4j Browser**: http://localhost:7474 (login: `neo4j`, password: see `.env`)
 - **MinIO Console**: http://localhost:9001 (credentials: see `.env`)
 
-**Check service status:**
+**Health Check:**
 ```bash
+# Check service status
 docker compose ps
 # All services should show "healthy" or "running"
+
+# Test API is responding
+curl http://localhost:8000/health
+# Should return: {"status":"ok"}
 ```
+
+**Try a real conversation:**
+```bash
+# Create a conversation with our Conversation aggregate
+curl -X POST http://localhost:8000/conversations \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is 5 factorial?"}'
+
+# Returns JSON with:
+# - conversation_id (uuid)
+# - messages array (your question + LLM response)
+# - The response used our calculator tool from domain/tools.py
+```
+
+Behind the scenes, this just exercised:
+- **Conversation aggregate** (domain/conversation.py) - Immutable, frozen model
+- **Two-phase routing** - Fast model selected execution model + tools
+- **Calculator tool** (domain/tools.py) - Safe AST-based evaluation
+- **Redis persistence** - Domain-owned serialization
+
+You're running real domain-driven architecture, not a toy.
 
 ---
 
@@ -356,15 +388,21 @@ Once installed:
 
 1. **Explore the API**: http://localhost:8000/docs
 2. **Try a conversation**: POST to `/conversations` with a message
-3. **Read the architecture**: See [`docs/app/`](app/) for application patterns
-4. **Understand infrastructure**: See [`docs/infra/`](infra/) for system details
+3. **Understand the philosophy**: Read [philosophy.md](philosophy.md) for the "why"
+4. **Navigate application patterns**: See [app/guide.md](app/guide.md) for scenario-based navigation
+5. **Navigate infrastructure**: See [infra/guide.md](infra/guide.md) for system navigation
 
 **New to Docker?** Start with:
 - [Infrastructure as Code](infra/iac.md) - Docker and containers explained
 - [Orchestration](infra/orchestration.md) - How everything starts up
 - [Systems](infra/systems.md) - What each database does
 
-**Need help?** Check:
+**Ready to code?** Check:
+- [Development Guide](development.md) - Daily workflows and best practices
+- [Type System](app/type-system.md) - Semantic types over primitives
+- [Domain Models](app/domain-models.md) - Rich aggregates with behavior
+
+**Need help?** Reference:
 - [`README.md`](../README.md) - Architecture overview
 - [`Makefile`](../Makefile) - All available commands
 - [GitHub Issues](https://github.com/yourusername/ai-native-app-architecture/issues) - Known issues and solutions

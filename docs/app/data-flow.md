@@ -4,6 +4,16 @@
 
 This document shows how our architecture creates clear, traceable data flow using real examples from the codebase.
 
+> **Principle: Every Transformation is Explicit**
+>
+> The data flow is a pipeline: HTTP JSON → Pydantic contract → Domain model → Domain operation → New domain state → API response. Each arrow is explicit. Each transformation has a type signature. Each step is independently testable.
+>
+> This creates natural audit trails. You can inspect state at any point. You can compare before/after. You can trace exactly what happened and why. No hidden mutations, no unclear data lineage, no "what changed this?" debugging.
+>
+> See: [philosophy.md](../philosophy.md) "Every Transformation is Explicit"
+
+---
+
 ## Explicit Transformation Pipeline
 
 Traditional code obscures how data changes. Our approach makes every transformation explicit.
@@ -442,6 +452,6 @@ conversation = await Conversation.load(
 - [`src/app/domain/conversation.py`](../../src/app/domain/conversation.py) - Full flow implementation
 - [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py) - Immutable state
 - [`src/app/api/routers/conversation.py`](../../src/app/api/routers/conversation.py) - HTTP layer
-- `immutability.md` - Why immutability enables traceability
-- `domain-models.md` - Domain logic organization
+- [Immutability](immutability.md) - Why immutability enables traceability
+- [Domain Models](domain-models.md) - Domain logic organization
 

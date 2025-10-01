@@ -4,6 +4,16 @@
 
 This document shows how we keep services thin by using real examples from `src/app/service/` and `src/app/api/`.
 
+> **Principle: Services Orchestrate; Domain Models Implement**
+>
+> Services have exactly four responsibilities: parse input from HTTP, load domain aggregates, call domain methods, persist results. That's it. Zero business logic. No conditionals based on domain state. No calculations. No validations.
+>
+> This creates clear boundaries: the API layer handles HTTP concerns, domain models handle business logic, services connect them with minimal translation. A service retrieves a `Conversation`, calls `send_message()`, persists the result, returns an API response. The `send_message` method contains all the routing, tool selection, and LLM execution logic.
+>
+> See: [philosophy.md](../philosophy.md) "Services Orchestrate; Domain Models Implement"
+
+---
+
 ## The Thin Orchestrator Pattern
 
 Services coordinate between domain and infrastructure—they don't implement business logic.
@@ -426,10 +436,49 @@ except ValueError as exc:
 
 ---
 
+## Anti-Patterns: What NOT to Do
+
+❌ **DON'T put business logic in services**
+- Service has `if order.total > 100: discount = 0.1`
+- Reality: Business rules scattered, duplicated, hard to find
+- Move to domain: `order.calculate_discount()` with logic inside model
+
+❌ **DON'T create "Manager" classes**
+- `UserManager`, `OrderManager`, `ConversationManager`
+- Reality: Procedural code with OO veneer, anemic domain models
+- Put methods on the domain models themselves
+
+❌ **DON'T violate the four responsibilities**
+- Services that do: parse + load + validate + transform + route + execute + log + persist
+- Reality: Fat services, unclear boundaries, hard to test
+- Only: parse → call domain → persist → return
+
+❌ **DON'T bypass domain methods in services**
+- Service directly manipulates model fields or calls infrastructure
+- Reality: Invariants broken, business logic duplicated
+- Always go through domain methods
+
+❌ **DON'T leak HTTP concerns into services**
+- Service returns `Response` objects or knows about status codes
+- Reality: Tight coupling, can't reuse service in non-HTTP contexts
+- Return domain types, let API layer handle HTTP
+
+❌ **DON'T add "Helper" or "Utils" classes**
+- `ValidationHelper`, `TransformationUtils`, `BusinessLogicHelper`
+- Reality: Logic divorced from data, unclear where things belong
+- Methods belong on domain models or are simple pure functions
+
+❌ **DON'T create services for every domain model**
+- `UserService`, `MessageService`, `ConversationService`, etc.
+- Reality: Unnecessary indirection, just wrapping domain calls
+- Only create services when coordination between aggregates is needed
+
+---
+
 **See Also:**
 - [`src/app/service/storage.py`](../../src/app/service/storage.py) - Thin storage service
 - [`src/app/api/routers/conversation.py`](../../src/app/api/routers/conversation.py) - Thin API layer
 - [`src/app/api/deps.py`](../../src/app/api/deps.py) - Dependency injection
-- `domain-models.md` - Where business logic lives
-- `immutability.md` - Domain model patterns
+- [Domain Models](domain-models.md) - Where business logic lives
+- [Immutability](immutability.md) - Domain model patterns
 

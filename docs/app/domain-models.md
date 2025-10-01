@@ -4,6 +4,50 @@
 
 This document shows how we build rich domain models that understand their own business rules, using real examples from `src/app/domain/`.
 
+> **Principle: Every Business Rule Lives With Its Data**
+>
+> The classic architecture: anemic domain models (just data) + fat service layer (all the logic). This creates artificial distance between data and meaning.
+>
+> Domain models are the heart of the application. They're not anemic data bags passed to service classes—they're rich objects that encapsulate both data and behavior. The `Conversation` aggregate manages history, routes to models, executes LLMs, and handles persistence. It doesn't delegate this to services; it owns it.
+>
+> The philosophy: behavior near data, aggregates over scattered entities, factories over constructors, domain-owned persistence over repository patterns.
+>
+> See: [philosophy.md](../philosophy.md) "Every Business Rule Lives With Its Data"
+
+---
+
+## Decision Framework: Where Does Logic Belong?
+
+Before writing a method or function, consider:
+
+**Put logic IN the domain model when:**
+- ✅ It's about one entity (e.g., "can this user access X?")
+- ✅ It's business rules (e.g., "is this order valid?")
+- ✅ It transforms the entity's state
+- ✅ It requires knowing entity internals
+
+**Create a domain method on aggregate when:**
+- ✅ Coordinates multiple entities (e.g., "transfer between accounts")
+- ✅ Maintains invariants across entities
+- ✅ Complex operation involving multiple steps
+- ✅ Still business logic, just across boundaries
+
+**Put logic IN services only when:**
+- ✅ Pure infrastructure orchestration (load → call → save)
+- ✅ Coordinating multiple aggregates
+- ✅ Translating between layers (HTTP → domain)
+- ✅ NO business logic whatsoever
+
+**Examples from our codebase:**
+- `Conversation.send_message()` → Domain method (business logic)
+- `ConversationHistory.append_message()` → Domain method (state transformation)
+- `ModelClassifier.route()` → Domain method (routing logic)
+- Service just calls `conversation.send_message()` → Orchestration only
+
+**When in doubt:** Put it in the domain model. You can always extract to service later if truly needed. But logic that starts in services rarely moves to domain where it belongs.
+
+---
+
 ## The Aggregate Root Pattern
 
 An aggregate root orchestrates a cluster of related models and contains the main business logic.
@@ -501,10 +545,54 @@ async def test_routing():
 
 ---
 
+## Anti-Patterns: What NOT to Do
+
+❌ **DON'T create anemic domain models (data bags)**
+- Models with only fields, no methods, all logic in services
+- Reality: Logic scattered, hard to find, not cohesive
+- Add methods to models, let them own their behavior
+
+❌ **DON'T bypass domain methods to modify state directly**
+- `conversation.history.messages.append(new_msg)` from outside
+- Reality: Invariants broken, validation skipped, unclear flow
+- Use domain methods: `conversation.send_message(text)`
+
+❌ **DON'T put business logic in services**
+- Service has conditionals like `if order.total > 100: apply_discount()`
+- Reality: Business rules divorced from domain, duplicated across services
+- Move to domain: `order.apply_volume_discount()` with logic inside
+
+❌ **DON'T create "Manager" or "Helper" classes**
+- `ConversationManager`, `MessageHelper`, `ValidationUtils`
+- Reality: Procedural code pretending to be OO, logic divorced from data
+- Methods belong on the entities they operate on
+
+❌ **DON'T make domain models depend on infrastructure**
+- Domain imports `from redis import Redis` or `from fastapi import Request`
+- Reality: Can't test domain without infrastructure, tight coupling
+- Domain takes infrastructure as method parameters, not dependencies
+
+❌ **DON'T use bare constructors for complex creation**
+- `Conversation(history=..., registry=..., model_pool=..., router=...)`
+- Reality: Easy to get wrong, no validation of correct setup
+- Use factory methods: `Conversation.start()`, `Conversation.load()`
+
+❌ **DON'T create models for every table/document**
+- One model per database table, even if not needed in domain
+- Reality: Database structure leaks into domain, anemic models proliferate
+- Model the DOMAIN, not the database. Aggregates ≠ tables.
+
+❌ **DON'T share mutable state between aggregates**
+- Two aggregates reference same mutable object
+- Reality: Hidden coupling, race conditions, unclear ownership
+- Use immutable value objects or copy data between aggregates
+
+---
+
 **See Also:**
 - [`src/app/domain/conversation.py`](../../src/app/domain/conversation.py) - Main aggregate
 - [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py) - Value objects
 - [`src/app/domain/model_catalog.py`](../../src/app/domain/model_catalog.py) - Configuration models
-- `immutability.md` - Why frozen=True matters
-- `service-patterns.md` - What goes in services instead
+- [Immutability](immutability.md) - Why frozen=True matters
+- [Service Patterns](service-patterns.md) - What goes in services instead
 

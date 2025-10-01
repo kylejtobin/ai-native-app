@@ -2,7 +2,17 @@
 
 **Orchestration is the art of coordinating many moving parts to work together as a coherent system.**
 
-In this template, we orchestrate 7 databases, an API server, and several initialization scripts. They need to start in the right order, wait for each other to be ready, run setup scripts once, and clean up gracefully. This document explains how we achieve that.
+In this template, we orchestrate multiple specialized systems (PostgreSQL, Redis, Neo4j, Qdrant, MinIO, Ollama), your API server, and several initialization scripts. They need to start in the right order, wait for each other to be ready, run setup scripts once, and clean up gracefully. This document explains how we achieve that.
+
+> **Principle: Every Startup is Orchestrated**
+>
+> Services have dependencies. Databases need time to become healthy. Initialization scripts should run once, not every startup. These facts are often encoded as documentation: "Remember to wait 30 seconds before accessing Neo4j."
+>
+> Orchestration makes dependencies explicit. Healthchecks make readiness observable. Sentinel files make one-time execution provable. The system coordinates itself—no human needs to remember the startup sequence.
+>
+> If coordination requires human memory, it will fail under pressure. If coordination is encoded in the system, it becomes reliable.
+>
+> See: [philosophy.md](../philosophy.md) "Every Startup is Orchestrated"
 
 ---
 
@@ -565,12 +575,51 @@ git commit
 
 ---
 
+## Anti-Patterns: What NOT to Do
+
+❌ **DON'T skip depends_on declarations**
+- "I'll just manually start services in the right order"
+- Reality: Forget once and waste an hour debugging
+- Always declare dependencies explicitly in docker-compose
+
+❌ **DON'T use depends_on without healthchecks**
+- `depends_on: postgres` just waits for container start, not readiness
+- Reality: API connects to PostgreSQL before it accepts connections → crash loop
+- Always use `depends_on: postgres: condition: service_healthy`
+
+❌ **DON'T run initialization scripts on every startup**
+- "I'll just run `init-db.sql` in the entrypoint every time"
+- Reality: Errors on subsequent starts, data gets reset, slow startup
+- Use sentinel files or one-time setup containers
+
+❌ **DON'T hardcode sleep delays**
+- `sleep 10 && curl api/health`
+- Reality: Race conditions (sometimes 10s isn't enough), wasteful (often ready in 2s)
+- Use proper healthcheck polling with retries
+
+❌ **DON'T ignore healthcheck failures**
+- Service shows "unhealthy" but you connect anyway
+- Reality: Intermittent failures, data corruption, cascade failures
+- Fix the healthcheck or fix the service, never ignore
+
+❌ **DON'T mix orchestration tools**
+- "I'll use docker-compose AND bash scripts AND systemd"
+- Reality: Coordination logic scattered, impossible to reason about
+- Pick one orchestration layer (docker-compose for dev, k8s for prod)
+
+❌ **DON'T forget to clean up test environments**
+- `make dev` → test → move on without cleanup
+- Reality: Stale containers, port conflicts, disk space issues
+- Always `make down` or `make clean` when done
+
+---
+
 ## Summary
 
 **Orchestration = Automation + Coordination + State Management**
 
 This template orchestrates:
-- **7 databases** with different purposes
+- **Multiple specialized systems** (PostgreSQL, Redis, Neo4j, Qdrant, MinIO, Ollama)
 - **3 setup scripts** that run once
 - **1 API service** that depends on everything
 - **Configuration generation** that runs first
@@ -581,6 +630,5 @@ This template orchestrates:
 **Next Steps:**
 - See [Systems](systems.md) for what each database does
 - See [IaC](iac.md) for Docker/container deep dive
-- See [Secrets](secrets.md) for credential management
-- See [Configuration](configuration.md) for environment variable structure
+- See [Configuration](configuration.md) for credential management and environment variable structure
 

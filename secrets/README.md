@@ -419,7 +419,7 @@ The four-layer system remains the same; you just change how secrets get into the
 ## Learn More
 
 - **Deep dive on configuration system:** [`docs/infra/configuration.md`](../docs/infra/configuration.md)
-- **How secrets flow through the system:** [`docs/infra/configuration.md#the-four-layer-system`](../docs/infra/configuration.md)
+- **How secrets flow through the system:** [`docs/infra/configuration.md#the-solution-four-layer-configuration`](../docs/infra/configuration.md#the-solution-four-layer-configuration)
 - **Type-safe settings consumption:** [`src/app/config.py`](../src/app/config.py)
 - **Model registry and API key detection:** [`src/app/domain/model_catalog.py`](../src/app/domain/model_catalog.py)
 

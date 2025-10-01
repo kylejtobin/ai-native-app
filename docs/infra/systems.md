@@ -4,6 +4,43 @@
 
 This template assembles a polyglot persistence stack where each system excels at its particular job. No single database can do everything well—but together, they create a powerful foundation for AI-native applications.
 
+> **Principle: Every Database is Specialized**
+>
+> No single database can excel at everything. PostgreSQL's ACID guarantees come at a cost Redis doesn't pay. Qdrant's vector search capabilities require trade-offs Neo4j doesn't make. This is polyglot persistence—using the right tool for each job, not forcing everything into one system that does nothing well.
+>
+> See: [philosophy.md](../philosophy.md) "Every Database is Specialized"
+
+---
+
+## Decision Framework: When to Add vs Reuse a Service
+
+Before adding a new database to this stack, consider:
+
+**Add a specialized service when:**
+- ✅ Different access patterns (OLTP vs OLAP, key-value vs graph traversal)
+- ✅ Different durability requirements (cache vs source of truth)
+- ✅ Different query capabilities (semantic search, relationship traversal)
+- ✅ Performance critical and existing tools can't match
+
+**Reuse existing service when:**
+- ✅ Same access pattern, just more data volume
+- ✅ Can be modeled as table/collection/key in existing system  
+- ✅ No specialized capability needed
+- ✅ Operational complexity outweighs performance gain
+
+**Examples from this stack:**
+- We use **separate Redis AND PostgreSQL** even though PostgreSQL could cache, because Redis gives us microsecond access and pub/sub that PostgreSQL can't match
+- We use **separate Qdrant AND Neo4j** even though both handle relationships, because vector similarity is fundamentally different from graph traversal
+- We **don't** add Elasticsearch even though it has vector search, because Qdrant is purpose-built and more performant for our semantic search needs
+
+**Cost of adding a service:**
+- One more thing to run, monitor, back up
+- More complexity in orchestration
+- More secrets to manage
+- More operational knowledge required
+
+**When in doubt:** Start with what you have, measure the pain, then specialize.
+
 ---
 
 ## PostgreSQL - Relational Foundation
@@ -180,15 +217,18 @@ FastAPI's async capabilities shine when orchestrating multiple LLM calls. You ca
 
 ## The Polyglot Persistence Philosophy
 
-**Why seven databases?** Each system is optimized for its workload:
+**Why multiple specialized systems?** Each is optimized for its specific workload:
 
+**Data Layer:**
 - **PostgreSQL**: ACID transactions, relational integrity
 - **Redis**: Microsecond latency, ephemeral state
 - **Qdrant**: Billion-scale vector similarity, hybrid search
 - **Neo4j**: Graph traversal, relationship-first modeling
 - **MinIO**: Object storage, S3 semantics
+
+**Services Layer:**
 - **Ollama**: Local LLM inference
-- **FastAPI**: Async HTTP, streaming, type safety
+- **FastAPI**: Your application (async HTTP, streaming, type safety)
 
 **The alternative** (one database for everything) means:
 - Slow vector search (relational DBs aren't built for this)
@@ -209,8 +249,42 @@ This stack demonstrates **composable infrastructure**—each piece does one thin
 
 **One command starts everything:**
 ```bash
-make dev  # All seven systems, configured and ready
+make dev  # Complete stack: data layer, LLM inference, and your API
 ```
+
+---
+
+## Anti-Patterns: What NOT to Do
+
+❌ **DON'T try to use one database for everything**
+- "PostgreSQL has JSON support, we don't need separate vector DB"
+- Reality: PostgreSQL's pgvector is 10-100x slower than Qdrant for similarity search
+- Use specialized tools or accept degraded performance
+
+❌ **DON'T bypass the stack and connect directly to external services**
+- "I'll just use OpenAI directly instead of through the model pool"
+- Reality: No caching, no rate limiting, no fallback, no local dev option
+- The abstraction exists for resilience and flexibility
+
+❌ **DON'T store large files (>1MB) in relational databases**
+- "I'll just base64 encode PDFs and put them in PostgreSQL"
+- Reality: Slow queries, bloated backups, memory issues
+- Use MinIO for objects, store references in PostgreSQL
+
+❌ **DON'T add services without understanding the operational cost**
+- "Let's add Elasticsearch AND Qdrant for search"
+- Reality: More monitoring, more backups, more points of failure
+- Justify each addition with performance measurements
+
+❌ **DON'T ignore Redis expiration for cache**
+- "I'll just cache everything forever in Redis"
+- Reality: Redis fills up, becomes swap-heavy, slows down
+- Always set TTL on cached data
+
+❌ **DON'T use Neo4j like a relational database**
+- "I'll store user records in Neo4j because it's cool"
+- Reality: Neo4j excels at relationships, not simple CRUD
+- Use the right tool: tables in PostgreSQL, graphs in Neo4j
 
 ---
 

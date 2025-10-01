@@ -2,7 +2,15 @@
 
 **Infrastructure as Code means defining your servers, networks, and databases as version-controlled text files.**
 
-This template uses Docker and docker-compose to define a complete development environment—7 databases, networking, storage, and an API—all declared in two files. No manual setup, no "works on my machine," no wiki documentation that goes stale. Just code.
+This template uses Docker and docker-compose to define a complete development environment—polyglot persistence (PostgreSQL, Redis, Neo4j, Qdrant, MinIO), local LLM inference (Ollama), and your API—all declared in two files. No manual setup, no "works on my machine," no wiki documentation that goes stale. Just code.
+
+> **Principle: Every Service is Declarative**
+>
+> Infrastructure as Code isn't just about version control—it's about declaring WHAT should exist rather than scripting HOW to create it. The docker-compose.yml doesn't say "run this command, then that command." It says "this is the complete system state." The orchestration engine figures out how to achieve it.
+>
+> When you declare what should be true, you eliminate an entire class of errors that come from executing steps in the wrong order, forgetting steps, or executing them twice.
+>
+> See: [philosophy.md](../philosophy.md) "Every Service is Declarative"
 
 ---
 
@@ -993,6 +1001,50 @@ docker compose ps
 # ✅ postgres:5432
 # ❌ localhost:5432
 ```
+
+---
+
+## Anti-Patterns: What NOT to Do
+
+❌ **DON'T run databases directly on your host machine for development**
+- "I'll just install PostgreSQL locally and skip Docker"
+- Reality: Version conflicts, port conflicts, different config than production
+- Containers ensure everyone has identical environments
+
+❌ **DON'T use `latest` tags in production**
+- `image: postgres:latest` seems convenient
+- Reality: Unpredictable updates break things, hard to rollback
+- Always pin specific versions: `postgres:17-alpine`
+
+❌ **DON'T store data inside containers without volumes**
+- "I'll just write to `/data` inside the container"
+- Reality: Data disappears when container restarts
+- Always use named volumes for persistence
+
+❌ **DON'T expose all ports to host**
+- `ports: - "5432:5432"` for every service
+- Reality: Port conflicts, security issues, unnecessary exposure
+- Only expose what users/developers actually need (API, admin UIs)
+
+❌ **DON'T hardcode secrets in docker-compose.yml**
+- `POSTGRES_PASSWORD: mysecretpassword123`
+- Reality: Secrets committed to git history forever
+- Use environment variables: `POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}`
+
+❌ **DON'T skip healthchecks**
+- "The service is running, it must be ready"
+- Reality: PostgreSQL process running ≠ ready to accept connections
+- Always define healthchecks (see [Orchestration](orchestration.md))
+
+❌ **DON'T manually edit files inside running containers**
+- `docker compose exec api vim /app/config.py`
+- Reality: Changes disappear on restart, not version controlled
+- Edit source files, let hot reload pick them up
+
+❌ **DON'T use `docker-compose` (with hyphen)**
+- The old `docker-compose` v1 CLI is deprecated
+- Use `docker compose` (space, v2 plugin) as shown in this repo
+- v2 is faster, better integrated, and actively maintained
 
 ---
 

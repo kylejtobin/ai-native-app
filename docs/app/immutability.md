@@ -4,6 +4,18 @@
 
 This document shows why and how we use immutability throughout our domain layer, with real examples from `src/app/domain/`.
 
+> **Principle: Every State Change Returns New Data**
+>
+> Mutability is implicit transformation. When an object changes underneath you, there's no record of what happened, no way to compare before/after, no audit trail.
+>
+> Immutability forces explicitness. If `user.update()` returned `User`, you'd wonder: is it the same user? A new one? A modified copy? But if every model is `frozen=True`, there's only one possibility: new instance, old instance unchanged.
+>
+> This eliminates entire categories of bugs: no race conditions (nothing changes while you're reading it), no action-at-a-distance (your reference can't be modified elsewhere), no temporal coupling (order of operations doesn't matter if nothing mutates), natural audit trails (compare old and new instances).
+>
+> See: [philosophy.md](../philosophy.md) "Every State Change Returns New Data"
+
+---
+
 ## Why Immutability?
 
 ### Problem: Hidden Mutations
@@ -317,9 +329,48 @@ conversation = await conversation.send_message("Thanks!")  # +2 messages
 
 ---
 
+## Anti-Patterns: What NOT to Do
+
+❌ **DON'T use mutable collections (list, dict, set) in frozen models**
+- `messages: list[Message] = []` even with `frozen=True`
+- Reality: Can still mutate the list even though model is frozen
+- Use immutable collections: `tuple[Message, ...] = ()`
+
+❌ **DON'T mutate and return self**
+- `def update(self): self.value = new; return self`
+- Reality: Hidden mutation, unclear if new instance or modified
+- Return new instance: `return self.model_copy(update={...})`
+
+❌ **DON'T skip frozen=True on domain models**
+- "I'll just be careful not to mutate"
+- Reality: Future you (or teammates) will mutate accidentally
+- Always `model_config = ConfigDict(frozen=True)` for domain models
+
+❌ **DON'T use global mutable state**
+- Module-level `CACHE = {}` that gets mutated
+- Reality: Race conditions, unclear ownership, hard to test
+- Pass state explicitly or use immutable caching patterns
+
+❌ **DON'T try to "optimize" by reusing instances**
+- Caching model instances to avoid creating new ones
+- Reality: Pydantic is fast, premature optimization, adds complexity
+- Create new instances freely, optimize only if profiling shows need
+
+❌ **DON'T mix mutable and immutable patterns**
+- Some models frozen, others not, unclear which is which
+- Reality: Cognitive overhead, easy to make mistakes
+- Domain models always frozen, infrastructure clients mutable
+
+❌ **DON'T use in-place operations**
+- `messages.sort()`, `data.update()`, `items.append()`
+- Reality: Mutates original, no trace of change
+- Use functional equivalents: `sorted(messages)`, `{**data, **updates}`, `items + (new,)`
+
+---
+
 **See Also:**
 - [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py) - Immutable value objects
 - [`src/app/domain/conversation.py`](../../src/app/domain/conversation.py) - Immutable aggregate
-- `domain-models.md` - Rich model patterns
-- `data-flow.md` - Traceability with immutable operations
+- [Domain Models](domain-models.md) - Rich model patterns
+- [Data Flow](data-flow.md) - Traceability with immutable operations
 

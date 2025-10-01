@@ -4,6 +4,18 @@
 
 This document shows how we integrate LLMs using Pydantic AI's type-driven approach, with real examples from our codebase.
 
+> **Principle: Every Boundary is Type-Safe**
+>
+> Boundaries are where errors hide. The network boundary (JSON), the database boundary (SQL), the user boundary (forms), the LLM boundary (text). Each boundary is a translation point, and translations can lie.
+>
+> Type-safe boundaries use Pydantic: LLM output → Pydantic validates → Application (guaranteed structured). Each boundary is a validation checkpoint. If something makes it past the boundary, it's been proven valid.
+>
+> Validate at boundaries, trust internally. The interior of your system operates on guarantees, not hopes.
+>
+> See: [philosophy.md](../philosophy.md) "Every Boundary is Type-Safe"
+
+---
+
 ## Pydantic AI as Type System Extension
 
 **Key insight:** Pydantic AI is not a vendor framework—it's an extension of Pydantic's type system.
@@ -480,10 +492,49 @@ No wrapping, no conversion layers—just composition.
 
 ---
 
+## Anti-Patterns: What NOT to Do
+
+❌ **DON'T load all tools into all agents**
+- Create one agent with calculator + search + 10 other tools "just in case"
+- Reality: Tool descriptions bloat context, confuse model, reduce accuracy
+- Use two-phase routing: classifier selects needed tools, agent only loads those
+
+❌ **DON'T skip structured outputs for complex responses**
+- Parse LLM text output with regex or string splitting
+- Reality: Brittle, fails on format variations, no validation
+- Use Pydantic models as `result_type` for guaranteed structure
+
+❌ **DON'T bypass model pool and create clients directly**
+- `agent = Agent(model="claude-sonnet...")` in application code
+- Reality: No caching, creates new client per request, slow and expensive
+- Use model pool: `model_pool.get_model(spec, tool_names)`
+
+❌ **DON'T ignore two-phase routing benefits**
+- Always use most expensive model for every query
+- Reality: Wastes money on simple queries that cheaper models handle fine
+- Use classifier to route: cheap for simple, expensive for complex
+
+❌ **DON'T put LLM logic in services**
+- Service builds prompts, parses responses, handles tool selection
+- Reality: Business logic scattered, hard to test without LLM
+- Domain models own LLM integration, services just orchestrate
+
+❌ **DON'T skip validation on structured outputs**
+- Trust LLM to always return valid data matching your type
+- Reality: LLMs make mistakes, return invalid formats occasionally
+- Pydantic validates automatically, but add field validators for business rules
+
+❌ **DON'T create wrapper types around Pydantic AI types**
+- Custom `MyModelMessage` that wraps `ModelMessage`
+- Reality: Unnecessary abstraction, impedance mismatch, more code
+- Use Pydantic AI types directly via composition
+
+---
+
 **See Also:**
 - [`src/app/domain/tools.py`](../../src/app/domain/tools.py) - Tool definitions
 - [`src/app/domain/conversation.py`](../../src/app/domain/conversation.py) - Structured outputs
 - [`src/app/domain/model_pool.py`](../../src/app/domain/model_pool.py) - Model pool with tools
-- `domain-models.md` - Rich model patterns
-- `type-system.md` - Type-driven design
+- [Domain Models](domain-models.md) - Rich model patterns
+- [Type System](type-system.md) - Type-driven design
 

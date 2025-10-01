@@ -1,6 +1,10 @@
 # Development Guide
 
-A practical guide to working with this codebase—git workflows, development patterns, and command reference.
+**Daily workflow and practices that reinforce the architecture**
+
+This guide shows you how to work with the codebase. More importantly, it shows you *why* each practice reinforces the architectural principles: immutability, explicitness, and type safety.
+
+> **Philosophy:** Every action teaches. When you edit a frozen domain model → hot reload shows the change → commit captures the transformation → git tracks the history, you're living the architecture's principle of explicit, traceable state changes.
 
 ---
 
@@ -79,6 +83,8 @@ make dev            # Start all services
 docker compose ps
 ```
 
+**Why start fresh?** Each `make dev` proves our infrastructure is **disposable**—a core principle. If you can destroy and rebuild in seconds, nothing is hidden. All knowledge needed to run the system is explicit in code.
+
 Visit:
 - API: http://localhost:8000
 - API Docs: http://localhost:8000/docs
@@ -90,7 +96,7 @@ Visit:
 The stack supports **hot reload**—edit files in `src/`, changes apply immediately (no restart needed).
 
 ```bash
-# Edit code
+# Edit a domain model (always frozen=True)
 vim src/app/domain/conversation.py
 
 # Check logs if something breaks
@@ -99,6 +105,18 @@ make logs
 # Or tail specific service
 docker compose logs -f api
 ```
+
+**Working with Domain Models:** Our domain models use `frozen=True` (immutable). When you edit `Conversation.send_message()`, you're changing behavior, not data structure. The method returns a new `Conversation` instance—the original is never modified.
+
+```python
+# This is how our code works (from conversation.py):
+async def send_message(self, text: str) -> Conversation:
+    """Returns NEW Conversation with updated history."""
+    # ... process message ...
+    return self.model_copy(update={"history": final_history})
+```
+
+Every state change is a traceable transformation. This isn't academic—it eliminates race conditions and makes debugging possible (compare old vs new instance).
 
 ### 3. Test Changes
 
@@ -143,6 +161,34 @@ make down
 make clean
 make dev    # Fresh start
 ```
+
+**Why `make clean`?** This enforces "disposable infrastructure." Never debug yesterday's state. Start clean, stay sane. If you can't rebuild from scratch in 60 seconds, you have implicit dependencies that need to be made explicit.
+
+---
+
+## The Pattern in Practice
+
+Your daily workflow embodies the architecture:
+
+**When you edit a domain model:**
+- Model is `frozen=True` → You're forced to return new instances
+- Methods have clear signatures → You can't hide mutations
+- Types validate automatically → Invalid states can't be constructed
+- Hot reload shows immediate feedback → Fast iteration on correct code
+
+**When you commit changes:**
+- Clear commit messages → Explicit transformations (like our domain methods)
+- Small, focused commits → Same principle as pure functions (one responsibility)
+- Git tracks every change → Immutable history (like our frozen models)
+- Branch strategy → Safe state transitions (like our status enums)
+
+**When you work with the stack:**
+- `make dev` rebuilds everything → Disposable infrastructure
+- Services coordinate automatically → Declared dependencies (no tribal knowledge)
+- Logs show explicit events → Traceable data flow
+- Configuration is generated → Derived from source of truth
+
+See the pattern? **Make the implicit explicit. Make the hidden visible. Everything teaches.**
 
 ---
 

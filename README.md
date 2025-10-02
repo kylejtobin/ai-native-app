@@ -43,6 +43,7 @@ This isn't a toy. It's a **real architecture** you can deploy, extend, and learn
   - [Application Architecture](#application-architecture)
     - [Foundation: The Type System](#foundation-the-type-system)
     - [LLM Integration](#llm-integration)
+    - [Semantic Search \& Vector Ingestion](#semantic-search--vector-ingestion)
     - [Rich Domain Models](#rich-domain-models)
     - [Immutability \& Safety](#immutability--safety)
     - [Service Layer: Thin Orchestration](#service-layer-thin-orchestration)
@@ -185,6 +186,20 @@ The integration uses Pydantic AI's types directly—no unnecessary wrappers, no 
 
 → [**LLM Integration**](docs/app/llm-integration.md) - Structured outputs, tool definitions, and Pydantic AI patterns  
 → [**Conversation System**](docs/app/conversation-system.md) - Two-phase classification, model pooling, and tool routing
+
+### Semantic Search & Vector Ingestion
+
+**Production-ready RAG with hybrid search (dense + sparse vectors).**
+
+Modern RAG systems require more than simple vector similarity—they need hybrid search that combines semantic understanding (dense vectors) with exact keyword matching (sparse vectors). This architecture implements type-safe vector ingestion using Qdrant's hybrid search capabilities.
+
+The ingestion pattern follows the minimal base principle: `VectorIngestion` provides pipeline tracking and embedding helpers, while concrete classes (ConversationVectorIngestion, DocumentVectorIngestion) own domain semantics. This avoids forcing generic `dict[str, Any]` types that eliminate type safety.
+
+**Key architectural decision:** Compose Qdrant's native Pydantic types (`SparseVector`, `Payload`, `VectorStruct`) instead of wrapping them. The vendor provides excellent types—wrapping creates impedance mismatch and obscures semantics. This pattern extends to all vendor integrations: compose when types are well-designed, wrap only when adding validation or domain meaning.
+
+**Embedding generation:** Dense vectors via local Ollama (privacy-preserving, zero-cost), sparse vectors via FastEmbed SPLADE (ONNX runtime, avoids 2GB PyTorch dependency). Named vectors enable Qdrant's RRF/DBSF fusion for superior retrieval accuracy.
+
+→ [**Semantic Search**](docs/app/semantic-search.md) - Hybrid RAG architecture, vector ingestion patterns, and composing vendor types
 
 ### Rich Domain Models
 
@@ -350,6 +365,7 @@ ai-native-app/
 │       ├── guide.md         # 🧭 Navigation by scenario
 │       ├── type-system.md   # Semantic types over primitives
 │       ├── domain-models.md # Rich aggregates
+│       ├── semantic-search.md # Vector ingestion & hybrid RAG
 │       └── llm-integration.md # AI patterns
 ├── tests/
 │   ├── unit/domain/         # Domain model tests (pure logic)
@@ -368,6 +384,7 @@ Now explore:
 **If you want to understand the patterns:**
 - Start with [**Type System**](docs/app/type-system.md) to see semantic types
 - Read [**Domain Models**](docs/app/domain-models.md) for rich aggregates
+- Study [**Semantic Search**](docs/app/semantic-search.md) for vector ingestion and hybrid RAG
 - Study [**LLM Integration**](docs/app/llm-integration.md) for AI patterns
 
 **If you want to build:**

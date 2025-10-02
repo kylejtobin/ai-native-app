@@ -807,6 +807,214 @@ skipped = SkippedStage(
 
 ---
 
+## Composing Vendor Types: When to Wrap vs Compose
+
+**When a vendor provides well-designed Pydantic types, compose them directly. Wrapper types that add no value are pure ceremony.**
+
+Modern Python libraries (Pydantic AI, Qdrant, etc.) provide excellent Pydantic models as part of their API. The question becomes: should you wrap these types in your own domain models, or compose them directly?
+
+**The Decision Framework:**
+
+### Compose Vendor Types When:
+- ✅ Vendor provides Pydantic models (not raw dicts or primitives)
+- ✅ Types are well-designed and semantically meaningful
+- ✅ No additional validation needed beyond vendor's
+- ✅ Types represent domain concepts, not implementation details
+
+### Wrap Vendor Types When:
+- ✅ Adding domain-specific validation rules
+- ✅ Adding computed properties or domain methods
+- ✅ Vendor type is primitive (`str`, `int`, `dict`)
+- ✅ Need semantic distinction (e.g., `DenseEmbeddingModel` vs `str`)
+
+### Real Example: Vector Ingestion
+
+From [`src/app/domain/vector_ingestion.py`](../../src/app/domain/vector_ingestion.py):
+
+**❌ The Anti-Pattern (deleted from codebase):**
+
+```python
+# DON'T: Wrapper that adds zero value
+class SparseVector(BaseModel):
+    """Wrapper around Qdrant's SparseVector."""
+    indices: list[int]
+    values: list[float]
+    model_config = ConfigDict(frozen=True)
+
+# Now you need conversion everywhere
+qdrant_sparse = QdrantSparseVector(
+    indices=our_sparse.indices,
+    values=our_sparse.values
+)
+```
+
+**Problems:**
+- Zero added value (no validation, no behavior, no domain meaning)
+- Creates impedance mismatch (our type ↔ their type)
+- Requires conversion at every boundary
+- Obscures vendor semantics (Qdrant's type is already good)
+- More code to maintain
+
+**✅ The Right Pattern (current code):**
+
+```python
+# DO: Import and compose Qdrant's types directly
+from qdrant_client.models import Payload, SparseVector, VectorStruct
+
+class HybridEmbedding(BaseModel):
+    """Text with dense and sparse vector representations."""
+    text: str
+    dense: list[float]
+    sparse: SparseVector | None = None  # Qdrant's type, not ours
+    
+    model_config = ConfigDict(frozen=True)
+```
+
+**Benefits:**
+- Zero conversion overhead
+- Vendor semantics preserved (IDE shows Qdrant documentation)
+- Type safety from composition
+- AI comprehends vendor relationship
+- Less code to maintain
+
+### When Wrapping IS Appropriate
+
+From the same file:
+
+```python
+# ✅ Wrapped: str → DenseEmbeddingModel (adds semantic meaning)
+class DenseEmbeddingModel(RootModel[str]):
+    """Semantic embedding model identifier for dense vectors."""
+    root: str = Field(min_length=1, max_length=200)
+    model_config = ConfigDict(frozen=True)
+```
+
+**Why wrap here?**
+- Adds validation (length constraints)
+- Provides semantic distinction (can't mix `DenseEmbeddingModel` with `SparseEmbeddingModel`)
+- Vendor doesn't provide a type for this (it's just a string)
+- Enhances observability (Logfire sees domain type, not generic string)
+
+### Comparison: Pydantic AI Integration
+
+From [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py):
+
+```python
+class StoredMessage(BaseModel):
+    """Message with Persistence Identity."""
+    id: MessageId
+    content: ModelMessage  # Pydantic AI's type - composed directly
+    
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+```
+
+**We compose `ModelMessage` directly** because:
+- Pydantic AI provides well-designed discriminated unions
+- No additional validation needed
+- Wrapping would create conversion overhead
+- We add our identity layer (`MessageId`) while composing their content layer
+
+### The Storage Pattern
+
+From [`src/app/service/storage.py`](../../src/app/service/storage.py):
+
+```python
+from redis import Redis as RedisClient
+from psycopg import AsyncConnection as PostgresClient
+from qdrant_client import QdrantClient
+
+class StorageClients(BaseModel):
+    """Composed vendor clients - no wrappers."""
+    redis: RedisClient
+    postgres: PostgresClient
+    qdrant: QdrantClient
+    # ... other clients
+    
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+```
+
+**Pattern: Compose clients, don't abstract them**
+- Each client is the vendor's native type
+- No repository pattern, no adapter layer
+- Domain models take clients as dependencies
+- Type system preserves vendor semantics
+
+### Decision Tree
+
+```
+Should I create a wrapper type?
+│
+├─ Is it a vendor Pydantic type? ──YES──┐
+│                                       │
+│                                       ├─ Does it need validation? ──YES──> Wrap with validator
+│                                       │
+│                                       └─ Does it need methods? ──YES──> Wrap with methods
+│                                           │
+│                                           └─ NO ──> Compose directly
+│
+└─ Is it a primitive? ──YES──┐
+                              │
+                              ├─ Does it need semantic meaning? ──YES──> Wrap with RootModel
+                              │
+                              └─ Is it just data? ──YES──> Use BaseModel with explicit fields
+```
+
+### Anti-Pattern: Wrapper Repository Layers
+
+**What NOT to do:**
+
+```python
+# ❌ Unnecessary abstraction layer
+class VectorRepository:
+    def __init__(self, client: QdrantClient):
+        self._client = client
+    
+    def upsert_vector(self, embedding: OurVector) -> None:
+        # Convert our types to Qdrant types
+        qdrant_point = self._to_qdrant_point(embedding)
+        self._client.upsert(...)
+    
+    def _to_qdrant_point(self, embedding: OurVector) -> QdrantPoint:
+        # Conversion layer adds no value
+        ...
+```
+
+**Why this is wrong:**
+- Adds layer that just converts types
+- Obscures Qdrant's API (can't use their docs directly)
+- Makes it harder to use advanced features
+- Violates "don't remake vendor types" principle
+
+**What to do instead:**
+
+```python
+# ✅ Domain model takes client directly
+class DocumentVectorIngestion(VectorIngestion):
+    @classmethod
+    async def ingest(
+        cls,
+        document: Document,
+        qdrant: QdrantClient,  # Vendor client directly
+    ) -> DocumentVectorIngestion:
+        # Use Qdrant's types directly
+        from qdrant_client.models import PointStruct, Payload
+        
+        point = PointStruct(
+            id=str(uuid4()),
+            vector=embedding_dict,
+            payload=metadata.model_dump()  # Pydantic → dict → Payload
+        )
+        qdrant.upsert(collection_name="docs", points=[point])
+```
+
+**Benefits:**
+- Domain logic owns persistence (not a separate repository)
+- Uses vendor types directly (no conversion)
+- Can use all Qdrant features (not limited by abstraction)
+- Clear dependencies (takes QdrantClient)
+
+---
+
 ## Anti-Patterns: What NOT to Do
 
 ❌ **DON'T use `dict[str, Any]` for domain data**
@@ -866,6 +1074,8 @@ skipped = SkippedStage(
 - [`src/app/domain/domain_value.py`](../../src/app/domain/domain_value.py) - RootModel patterns
 - [`src/app/domain/model_catalog.py`](../../src/app/domain/model_catalog.py) - Complex composition
 - [`src/app/domain/pipeline.py`](../../src/app/domain/pipeline.py) - Discriminated unions, semantic types
+- [`src/app/domain/vector_ingestion.py`](../../src/app/domain/vector_ingestion.py) - Composing Qdrant types
+- [Semantic Search](semantic-search.md) - Vector ingestion and hybrid RAG patterns
 - [Domain Models](domain-models.md) - Rich model patterns
 - [Immutability](immutability.md) - Why frozen models matter
 

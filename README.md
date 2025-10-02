@@ -105,7 +105,7 @@ Why specialized systems matter: PostgreSQL can't match Qdrant's vector search pe
 | **Dependencies** | uv | Deterministic resolution, faster than pip, lock file integrity |
 | **ACID Transactions** | PostgreSQL | Proven reliability, complex queries, data integrity |
 | **Microsecond Cache** | Redis | In-memory speed, pub/sub, session storage |
-| **Vector Search** | Qdrant | Purpose-built for embeddings, fast similarity search |
+| **Vector Search** | Qdrant | Hybrid RAG (dense + sparse), HNSW indexing, payload filtering |
 | **Knowledge Graph** | Neo4j | Native graph storage, Cypher query language |
 | **Object Storage** | MinIO | S3-compatible, self-hosted, no vendor lock-in |
 | **Local LLM** | Ollama | Privacy-preserving inference, no API costs |

@@ -22,7 +22,7 @@ from uuid import uuid4
 
 import pytest
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams
+from qdrant_client.models import Distance, Payload, SparseVector, VectorParams
 
 from app.config import settings
 from app.domain.pipeline import StageName
@@ -30,7 +30,6 @@ from app.domain.vector_ingestion import (
     DenseEmbeddingModel,
     HybridEmbedding,
     SparseEmbeddingModel,
-    SparseVector,
     VectorIngestion,
     VectorType,
 )
@@ -201,12 +200,12 @@ async def test_upsert_to_qdrant(
         dense=[0.1] * 768,  # Mock dense vector
         sparse=SparseVector(indices=[100, 200, 300], values=[0.5, 0.3, 0.2]),
     )
-    metadata = {"source": "test", "category": "example", "text": text}
+    payload: Payload = {"source": "test", "category": "example", "text": text}
     stage_name = StageName("test_upsert")
 
     stage = await ingestion._create_upsert_stage(
         embedding=embedding,
-        metadata=metadata,
+        payload=payload,
         qdrant=qdrant_client,
         collection=test_collection,
         stage_name=stage_name,
@@ -285,10 +284,10 @@ async def test_end_to_end_hybrid_ingestion(
     assert hybrid_embedding.is_hybrid
 
     # Step 4: Upsert to Qdrant
-    metadata = {"source": "integration_test", "language": "rust", "text": text}
+    payload: Payload = {"source": "integration_test", "language": "rust", "text": text}
     upsert_stage = await ingestion._create_upsert_stage(
         embedding=hybrid_embedding,
-        metadata=metadata,
+        payload=payload,
         qdrant=qdrant_client,
         collection=test_collection,
         stage_name=StageName("upsert"),

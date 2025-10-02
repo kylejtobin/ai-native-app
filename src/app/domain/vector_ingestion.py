@@ -1,21 +1,40 @@
-"""Vector Ingestion Base - Minimal pipeline infrastructure for vector store ingestion.
+"""Vector Ingestion Base - Minimal pipeline infrastructure for hybrid RAG.
 
-This module provides the minimal base for vector ingestion pipelines.
-Concrete implementations handle domain-specific logic (what to embed, how to chunk, etc.).
+Provides base class and helpers for Qdrant vector ingestion with hybrid search
+(dense + sparse embeddings). Concrete classes add domain-specific semantics.
+
+Architecture:
+    VectorIngestion (base) → Provides pipeline tracking + embedding helpers
+    ├─ ConversationVectorIngestion → Embeds conversation history
+    ├─ DocumentVectorIngestion → Chunks and embeds documents
+    └─ GraphEntityVectorIngestion → Embeds graph entity summaries
 
 Key Principles:
-    - Base class provides shared infrastructure only
-    - Concrete classes own domain semantics
-    - No premature abstraction of stages
-    - Type safety through Pydantic models
+    - Compose Qdrant's types (SparseVector, Payload, VectorStruct) directly
+    - No wrapper types that add no value (type safety comes from composition)
+    - Base class provides infrastructure, not abstracted domain logic
+    - Concrete classes own their domain semantics (IDs, metadata, orchestration)
+    - Type safety eliminates dict[str, Any] at every boundary
+
+Hybrid Search Design:
+    - Dense vectors: Semantic similarity via Ollama (local, private)
+    - Sparse vectors: Keyword matching via FastEmbed SPLADE (ONNX, no PyTorch)
+    - Named vectors: Qdrant stores both in single point for RRF/DBSF fusion
+    - Payload: Domain metadata for filtering and context
+
+See Also:
+    - pipeline.py: Pipeline primitive for stage tracking
+    - storage.py: Pattern for composing vendor clients
+    - type-system.md: When to wrap vs compose external types
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
+from qdrant_client.models import Payload, SparseVector, VectorStruct
 
 from .pipeline import Pipeline
 
@@ -116,28 +135,6 @@ class SparseEmbeddingModel(RootModel[str]):
     model_config = ConfigDict(frozen=True)
 
 
-class SparseVector(BaseModel):
-    """Sparse vector representation with indices and values.
-
-    Efficient representation for sparse embeddings where most values are zero.
-    Maps directly to Qdrant's SparseVector format.
-
-    Attributes:
-        indices: Non-zero element positions
-        values: Non-zero element values
-
-    Invariants:
-        - indices and values must have same length
-        - indices should be sorted (convention, not enforced)
-        - no duplicate indices (convention, not enforced)
-    """
-
-    indices: list[int]
-    values: list[float]
-
-    model_config = ConfigDict(frozen=True)
-
-
 class HybridEmbedding(BaseModel):
     """Text with both dense and sparse vector representations.
 
@@ -147,11 +144,11 @@ class HybridEmbedding(BaseModel):
     Attributes:
         text: Original text that was embedded
         dense: Dense embedding vector (always present)
-        sparse: Sparse embedding vector (optional for hybrid search)
+        sparse: Sparse embedding vector (optional, using Qdrant's SparseVector)
 
     Why this design?
-        - Type-safe: Explicit fields prevent confusion
-        - Efficient: Sparse vectors stored in compressed format
+        - Type-safe: Uses Qdrant's SparseVector type directly
+        - Efficient: Sparse vectors stored in compressed format (indices/values)
         - Flexible: Supports dense-only or hybrid (dense + sparse)
         - Composable: Ready for Qdrant PointStruct construction
 
@@ -161,6 +158,8 @@ class HybridEmbedding(BaseModel):
         - Text must be non-empty (validation via Pydantic)
 
     Example:
+        >>> from qdrant_client.models import SparseVector
+        >>>
         >>> # Dense only (basic semantic search)
         >>> emb = HybridEmbedding(
         ...     text="Hello world",
@@ -195,22 +194,28 @@ class HybridEmbedding(BaseModel):
 class VectorIngestion(BaseModel):
     """Minimal base for vector ingestion pipelines.
 
-    Provides only the pipeline tracking infrastructure.
-    Concrete classes add domain-specific fields and stage-building methods.
+    Provides shared pipeline infrastructure and protected helper methods
+    (_create_dense_embedding_stage, _create_sparse_embedding_stage, _create_upsert_stage).
+    Concrete classes compose these with domain-specific orchestration.
 
     Why minimal?
-        Different domains have different needs:
-        - Conversations: message extraction, conversational context
-        - Documents: chunking strategies, document metadata
-        - Graph entities: relationship context, entity summarization
+        Different domains need different types:
+        - Conversations: ConversationId, MessageId, conversational context
+        - Documents: DocumentId, ChunkMetadata, chunking strategies
+        - Graph entities: EntityId, RelationshipContext, graph summaries
 
-        Premature abstraction of "common" embedding/upsert methods would
-        force lowest-common-denominator types (dict, Any, str) that
-        violate our type safety principles.
+        Forcing common abstractions would require generic dict[str, Any] types
+        that eliminate type safety and semantic richness.
 
-    Architecture:
-        Each concrete class composes Pipeline primitive and builds
-        domain-specific stages with proper semantic types.
+    Design Pattern:
+        Base class provides infrastructure (pipeline tracking, embedding generation).
+        Concrete classes provide domain semantics (what to embed, what metadata to store).
+
+    Concrete Class Responsibilities:
+        1. Define domain-specific fields (IDs, metadata types)
+        2. Implement factory method that orchestrates stages
+        3. Build pipeline with proper semantic types
+        4. Return frozen instance with completed pipeline
 
     Example:
         >>> class ConversationVectorIngestion(VectorIngestion):
@@ -220,9 +225,11 @@ class VectorIngestion(BaseModel):
         ...     @classmethod
         ...     async def ingest(cls, history: ConversationHistory, ...) -> ConversationVectorIngestion:
         ...         pipeline = Pipeline()
-        ...         # Build domain-specific stages
-        ...         ...
-        ...         return cls(conversation_id=history.conversation_id, pipeline=pipeline)
+        ...         # Orchestrate domain-specific stages using base class helpers
+        ...         dense_stage = await cls._create_dense_embedding_stage(...)
+        ...         pipeline = pipeline.append(dense_stage)
+        ...         # ... more stages
+        ...         return cls(conversation_id=history.id, pipeline=pipeline)
     """
 
     pipeline: Pipeline = Pipeline()
@@ -237,12 +244,12 @@ class VectorIngestion(BaseModel):
     ) -> SuccessStage | FailedStage:
         """Generate dense embedding via Ollama.
 
-        Calls Ollama embeddings API with specified model.
-        Returns stage with HybridEmbedding containing dense vector.
+        Uses local Ollama server for privacy-preserving, zero-cost inference.
+        Returns HybridEmbedding with dense vector and empty sparse (sparse added separately).
 
         Args:
             text: Text to embed
-            model: Dense embedding model identifier
+            model: Dense embedding model identifier (e.g., "nomic-embed-text")
             stage_name: Name for this stage in pipeline
 
         Returns:
@@ -292,8 +299,11 @@ class VectorIngestion(BaseModel):
     ) -> SuccessStage | FailedStage:
         """Generate sparse embedding via FastEmbed SPLADE.
 
-        Uses Qdrant's FastEmbed library with SPLADE model.
-        Lightweight alternative to transformers/pytorch.
+        Uses Qdrant's FastEmbed library with SPLADE model (ONNX runtime).
+        Avoids heavy transformers/PyTorch dependencies while maintaining quality.
+
+        Returns HybridEmbedding with empty dense vector—designed to be composed
+        with _create_dense_embedding_stage in concrete implementations.
 
         Args:
             text: Text to embed
@@ -315,18 +325,16 @@ class VectorIngestion(BaseModel):
             embedding_model = SparseTextEmbedding(model_name=model.root)
             sparse_embeddings = list(embedding_model.embed([text]))
 
-            # Extract first (only) embedding - FastEmbed returns indices/values format
+            # FastEmbed batches even single inputs; extract the only result
             fastembed_sparse = sparse_embeddings[0]
 
-            # Convert to our SparseVector type (same format, just wrapped)
+            # Convert FastEmbed's sparse format to Qdrant's SparseVector
             sparse_vec = SparseVector(
                 indices=fastembed_sparse.indices.tolist(),
                 values=fastembed_sparse.values.tolist(),
             )
 
-            # Note: We need a dummy dense vector here since HybridEmbedding requires it
-            # In practice, you'd either combine this with dense stage or pass through existing embedding
-            # For now, this method is meant to be composed with dense stage
+            # Empty dense vector: concrete classes combine with dense stage
             embedding = HybridEmbedding(text=text, dense=[], sparse=sparse_vec)
 
             return SuccessStage(
@@ -351,19 +359,24 @@ class VectorIngestion(BaseModel):
     async def _create_upsert_stage(
         self,
         embedding: HybridEmbedding,
-        metadata: dict[str, Any],
+        payload: Payload,
         qdrant: QdrantClient,
         collection: str,
         stage_name: StageName,
     ) -> SuccessStage | FailedStage:
         """Upsert hybrid embedding to Qdrant.
 
-        Constructs Qdrant point with named vectors and metadata payload.
-        Handles both dense-only and hybrid (dense + sparse) embeddings.
+        Constructs PointStruct with named vectors for hybrid search (dense + sparse).
+        Named vectors enable Qdrant's RRF/DBSF fusion and per-vector filtering.
+
+        Point Structure:
+            - id: Random UUID (no deduplication - create new point per ingestion)
+            - vector: Named dict mapping VectorType to embeddings
+            - payload: Domain metadata for filtering and display
 
         Args:
             embedding: HybridEmbedding with dense and optionally sparse vectors
-            metadata: Arbitrary metadata dict for Qdrant payload (any JSON-serializable types)
+            payload: Qdrant payload dict (JSON-serializable metadata)
             qdrant: Qdrant client instance
             collection: Target collection name
             stage_name: Name for this stage in pipeline
@@ -380,22 +393,17 @@ class VectorIngestion(BaseModel):
         start = datetime.now(UTC)
         try:
             from qdrant_client.models import PointStruct
-            from qdrant_client.models import SparseVector as QdrantSparseVector
 
-            # Build named vector dict with dense vector
-            vector_dict: dict[str, Any] = {VectorType.DENSE.value: embedding.dense}
+            # Named vectors: keys match VectorType enum for hybrid search
+            vector_dict: dict[str, list[float] | SparseVector] = {VectorType.DENSE.value: embedding.dense}
 
-            # Add sparse if present
             if embedding.is_hybrid and embedding.sparse:
-                vector_dict[VectorType.SPARSE.value] = QdrantSparseVector(
-                    indices=embedding.sparse.indices,
-                    values=embedding.sparse.values,
-                )
+                vector_dict[VectorType.SPARSE.value] = embedding.sparse
 
-            # Create point
-            point = PointStruct(id=str(uuid4()), vector=vector_dict, payload=metadata)
+            # VectorStruct is Qdrant's union type for single/multi/named vectors
+            vectors: VectorStruct = vector_dict  # type: ignore[assignment]
 
-            # Upsert to Qdrant - returns UpdateResult (Qdrant's Pydantic model)
+            point = PointStruct(id=str(uuid4()), vector=vectors, payload=payload)
             result = qdrant.upsert(collection_name=collection, points=[point])
 
             return SuccessStage(
@@ -422,7 +430,6 @@ __all__ = [
     "DenseEmbeddingModel",
     "HybridEmbedding",
     "SparseEmbeddingModel",
-    "SparseVector",
     "VectorIngestion",
     "VectorType",
 ]

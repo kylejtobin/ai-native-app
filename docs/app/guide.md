@@ -21,6 +21,7 @@ Each document covers one architectural pattern:
 | **[service-patterns.md](service-patterns.md)** | Thin orchestration, boundaries | Building services |
 | **[data-flow.md](data-flow.md)** | Explicit transformations, traceability | Understanding flow |
 | **[llm-integration.md](llm-integration.md)** | Pydantic AI, structured outputs | Integrating LLMs |
+| **[semantic-search.md](semantic-search.md)** | Vector ingestion, hybrid RAG, Qdrant patterns | Building semantic search |
 | **[conversation-system.md](conversation-system.md)** | Complete system architecture | Understanding the full flow |
 | **[testing.md](testing.md)** | What NOT to test, efficiency | Writing tests |
 
@@ -88,6 +89,35 @@ See ["I want to track multi-stage transformations"](#i-want-to-track-multi-stage
 4. Model pool automatically detects and creates clients
 
 **Key principle:** No code changes needed. Configuration drives everything.
+
+### "I want to add semantic search / RAG"
+
+**RAG (Retrieval-Augmented Generation) requires vector ingestion, storage, and retrieval.**
+
+**Learning path:**
+1. Read [semantic-search.md](semantic-search.md) → Complete RAG architecture
+   - See "Hybrid Search Architecture" for why dense + sparse
+   - See "Vector Ingestion Base" for pipeline pattern
+   - See "Composing Qdrant Types" for type safety approach
+2. Read [type-system.md](type-system.md) → Composing vendor types
+   - See "Composing Vendor Types: When to Wrap vs Compose"
+3. Read [pipeline-pattern.md](pipeline-pattern.md) → Observability
+   - See how stages track embedding generation, upsert operations
+
+**Implementation path:**
+1. Extend `VectorIngestion` base class with domain-specific subclass
+2. Define domain metadata type (e.g., `ConversationMetadata`, `DocumentMetadata`)
+3. Implement factory method that orchestrates: text extraction → dense embedding → sparse embedding → upsert
+4. Use Qdrant's types directly (`SparseVector`, `Payload`, `VectorStruct`)—don't wrap them
+5. Create Qdrant collection with named vectors schema
+
+**Example:** See `src/app/domain/vector_ingestion.py` for base implementation and helpers.
+
+**Key principles:**
+- Compose Qdrant types (don't wrap them)—they're already excellent Pydantic models
+- Domain-specific metadata types (not `dict[str, Any]`)
+- Pipeline tracking for observability
+- Minimal base class, rich concrete classes
 
 ### "I'm getting type errors"
 

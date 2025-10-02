@@ -11,6 +11,7 @@ authors = [
 dependencies = [
     "asyncpg>=0.29.0",
     "fastapi>=0.104.0",
+    "fastembed>=0.4.2",
     "neo4j>=5.14.0",
     "passlib[bcrypt]>=1.7.4",
     "pydantic>=2.5.0",
@@ -30,6 +31,7 @@ dependencies = [
     "qdrant-client>=1.15.1",
     "tavily-python>=0.7.12",
     "logfire>=4.10.0",
+    "ollama>=0.6.0",
 ]
 
 [dependency-groups]

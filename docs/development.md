@@ -166,6 +166,45 @@ make dev    # Fresh start
 
 ---
 
+## Working with AI/IDE Agents
+
+### ADT-Driven Development with AI
+
+This codebase provides a system prompt for IDE agents that enforces our architectural principles.
+
+**System Prompt:** [`docs/devtool/ADT-architect.md`](../devtool/ADT-architect.md)
+
+This prompt ensures AI agents understand our:
+- **Type-first design** - ADTs define the domain grammar
+- **Immutable domain models** - Frozen, pure decision logic
+- **Service orchestration** - Stateless, protocol-based coordination
+- **Discriminated unions** - Type-safe outcomes, never exceptions
+- **Repository pattern** - Observability boundary that composes vendor types
+
+**How to use it:**
+
+**Cursor:** Configure a custom agent with:
+- **Model:** Your preferred model (Claude Sonnet 4.5, etc.)
+- **Custom Instructions:** Copy the contents of `ADT-architect.md`
+- **Tools:** Standard Cursor tools (file operations, search, etc.)
+
+This gives you an AI pair programmer that understands our architecture and generates code following our patterns.
+
+**Key principle from the prompt:**
+> "Repository normalizes HOW you access storage (semantic methods, Logfire spans), NOT WHAT types you use (compose vendor types directly)."
+
+This aligns with our pattern documentation and ensures AI-generated code follows our architectural philosophy: explicit semantics, immutable data, type-safe boundaries.
+
+**When NOT to follow AI suggestions:**
+- If it adds wrapper types around well-designed vendor types (Qdrant, Pydantic AI)
+- If it makes domain models mutable (`frozen=False`)
+- If it puts business logic in services instead of domain models
+- If it uses exceptions instead of discriminated unions for expected outcomes
+
+The ADT-architect prompt trains your AI to be an expert in this specific architecture.
+
+---
+
 ## The Pattern in Practice
 
 Your daily workflow embodies the architecture:
